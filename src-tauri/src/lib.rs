@@ -5,6 +5,7 @@ mod gpu_control;
 mod profiles;
 mod projects;
 mod systemd_control;
+mod update_check;
 
 use serde::Serialize;
 use std::fs;
@@ -793,6 +794,11 @@ async fn undo_profile(
 }
 
 #[tauri::command]
+async fn check_for_update() -> Result<Option<update_check::UpdateInfo>, String> {
+    update_check::check_for_update("ItzAditya43/Trace").await
+}
+
+#[tauri::command]
 fn get_action_log(state: tauri::State<AppState>, since_secs_ago: i64) -> Vec<db::ActionRow> {
     state.db.actions_since(chrono_now() - since_secs_ago)
 }
@@ -896,7 +902,8 @@ pub fn run() {
             save_profile,
             apply_profile,
             undo_profile,
-            get_action_log
+            get_action_log,
+            check_for_update
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -557,6 +557,38 @@ body {
   gap: 3px;
 }
 
+.update-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: #1a2a4a;
+  border: 1px solid #2d4a80;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  font-size: 13px;
+}
+
+.update-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.update-dismiss {
+  background: none;
+  border: none;
+  color: #9aa1b0;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 6px;
+}
+
+.update-dismiss:hover {
+  color: #e6e8ee;
+}
+
 .panel {
   background: #12141b;
   border: 1px solid #1e212b;

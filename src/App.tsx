@@ -4,6 +4,7 @@ import History from "./History";
 import Diagnose from "./Diagnose";
 import Projects from "./Projects";
 import Control from "./Control";
+import UpdateBanner from "./UpdateBanner";
 import "./App.css";
 
 interface ProcessInfo {
@@ -123,6 +124,7 @@ function App() {
   if (!snapshot) {
     return (
       <main className="container">
+        <UpdateBanner />
         <header className="header">
           <h1>Trace</h1>
           <span className="subtitle">Machine Observatory</span>
@@ -140,6 +142,7 @@ function App() {
 
   return (
     <main className="container">
+      <UpdateBanner />
       <header className="header">
         <h1>Trace</h1>
         <span className="subtitle">

@@ -17,6 +17,10 @@ Built with Tauri (Rust) + React/TypeScript.
 - **Projects** — scans a directory for git status, languages, dependencies, TODOs, and activity level
 - **Control** — freeze/kill/limit processes, manage systemd services and Docker containers, tune GPU settings, all via undoable/dry-runnable profiles with a full audit log
 
+## Updates
+
+Every push to `main` builds and publishes a new [GitHub Release](../../releases) automatically. The app checks that feed on launch and shows a dismissible banner if a newer version exists — it never downloads or installs anything on its own.
+
 ## Development
 
 ```bash
