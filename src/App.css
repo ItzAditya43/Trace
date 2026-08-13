@@ -125,10 +125,112 @@ body {
   display: block;
 }
 
+.chart-grid {
+  stroke: #262a36;
+  stroke-width: 0.3;
+}
+
 .chart-empty {
   display: flex;
   align-items: center;
   justify-content: center;
+  color: #7d8494;
+  font-size: 12px;
+}
+
+.chart-stats {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  color: #7d8494;
+}
+
+.chart-stat strong {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.chart-with-axis {
+  display: flex;
+  gap: 8px;
+}
+
+.chart-y-axis {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  font-size: 10px;
+  color: #7d8494;
+  text-align: right;
+  min-width: 34px;
+  padding: 1px 0;
+}
+
+.chart-x-axis {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: #7d8494;
+  margin-top: 4px;
+  margin-left: 42px;
+}
+
+.pie-layout {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.pie-svg {
+  width: 160px;
+  height: 160px;
+  flex-shrink: 0;
+}
+
+.pie-center-label {
+  fill: #e6e8ee;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.pie-center-sublabel {
+  fill: #7d8494;
+  font-size: 6px;
+}
+
+.pie-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-width: 200px;
+}
+
+.pie-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.pie-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.pie-legend-mount {
+  flex: 1;
+  color: #e6e8ee;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pie-legend-value {
   color: #7d8494;
   font-size: 12px;
 }
