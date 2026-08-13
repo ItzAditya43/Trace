@@ -773,57 +773,74 @@ body {
 
 .core-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(58px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(36px, 1fr));
+  gap: 6px;
 }
 
 .core-cell {
   position: relative;
-  height: 84px;
+  height: 58px;
   background: #1c1f29;
-  border-radius: 6px;
+  border-radius: 4px;
   overflow: hidden;
   display: flex;
   align-items: flex-end;
-  justify-content: center;
+  cursor: default;
+  transition: outline-color 0.15s ease;
+  outline: 1px solid transparent;
+}
+
+.core-cell:hover {
+  outline-color: #333849;
 }
 
 .core-fill {
-  position: absolute;
-  bottom: 0;
-  left: 0;
   width: 100%;
+  background: #4a7fe0;
   transition: height 0.4s ease, background 0.4s ease;
 }
 
-.core-fill-ok {
-  background: #3fb96866;
+.core-cell-ok .core-fill {
+  background: #3fb968;
 }
 
-.core-fill-warn {
-  background: #e0a83e77;
+.core-cell-warn .core-fill {
+  background: #e0a83e;
 }
 
-.core-fill-danger {
-  background: #e0503e88;
+.core-cell-danger .core-fill {
+  background: #e0503e;
 }
 
 .core-percent {
-  position: relative;
-  font-size: 15px;
+  position: absolute;
+  top: 3px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 10px;
   font-weight: 700;
   color: #e6e8ee;
-  margin-bottom: 20px;
 }
 
 .core-label {
   position: absolute;
-  bottom: 4px;
+  bottom: 12px;
   left: 0;
   right: 0;
   text-align: center;
   font-size: 9px;
-  color: #9aa1b0;
+  color: #ffffffcc;
+}
+
+.core-freq {
+  position: absolute;
+  bottom: 2px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 8px;
+  color: #ffffff99;
 }
 
 .gpu-block {

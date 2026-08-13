@@ -50,6 +50,7 @@ interface BatteryInfo {
 interface Snapshot {
   cpu_usage_percent: number;
   per_core_usage: number[];
+  per_core_freq_mhz: number[];
   total_memory_bytes: number;
   used_memory_bytes: number;
   total_swap_bytes: number;
@@ -215,18 +216,25 @@ function App() {
         <div className="core-grid">
           {snapshot.per_core_usage.map((usage, i) => {
             const level = usage > 85 ? "danger" : usage > 60 ? "warn" : "ok";
+            const freq = snapshot.per_core_freq_mhz[i];
             return (
-              <div key={i} className="core-cell">
+              <div key={i} className={`core-cell core-cell-${level}`} title={`Core ${i}: ${usage.toFixed(0)}%${freq ? ` @ ${(freq / 1000).toFixed(2)} GHz` : ""}`}>
                 <div
-                  className={`core-fill core-fill-${level}`}
+                  className="core-fill"
                   style={{ height: `${Math.min(usage, 100)}%` }}
                 />
                 <span className="core-percent">{usage.toFixed(0)}</span>
-                <span className="core-label">core {i}</span>
+                <span className="core-label">{i}</span>
+                {freq > 0 && (
+                  <span className="core-freq">{(freq / 1000).toFixed(1)}GHz</span>
+                )}
               </div>
             );
           })}
         </div>
+        <p className="diagnose-hint">
+          Hover a core for exact load and clock speed.
+        </p>
       </section>
 
       {snapshot.gpus.length > 0 && (

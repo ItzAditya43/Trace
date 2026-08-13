@@ -70,6 +70,7 @@ struct BatteryInfo {
 struct Snapshot {
     cpu_usage_percent: f32,
     per_core_usage: Vec<f32>,
+    per_core_freq_mhz: Vec<u64>,
     total_memory_bytes: u64,
     used_memory_bytes: u64,
     total_swap_bytes: u64,
@@ -342,6 +343,7 @@ fn take_snapshot(state: &AppState) -> Snapshot {
     Snapshot {
         cpu_usage_percent: sys.global_cpu_usage(),
         per_core_usage: sys.cpus().iter().map(|c| c.cpu_usage()).collect(),
+        per_core_freq_mhz: sys.cpus().iter().map(|c| c.frequency()).collect(),
         total_memory_bytes: sys.total_memory(),
         used_memory_bytes: sys.used_memory(),
         total_swap_bytes: sys.total_swap(),
