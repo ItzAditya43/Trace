@@ -235,6 +235,57 @@ body {
   font-size: 12px;
 }
 
+.folder-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.folder-row {
+  display: grid;
+  grid-template-columns: 160px 1fr 90px;
+  align-items: center;
+  gap: 10px;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 8px;
+  cursor: pointer;
+  text-align: left;
+  font-size: 13px;
+  color: #e6e8ee;
+}
+
+.folder-row:hover {
+  background: #1c1f29;
+}
+
+.folder-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-bar-track {
+  height: 8px;
+  background: #1c1f29;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.folder-bar-fill {
+  height: 100%;
+  background: #c26be0;
+  border-radius: 4px;
+}
+
+.folder-size {
+  text-align: right;
+  color: #9aa1b0;
+  font-size: 12px;
+}
+
 .diagnose-panel {
   text-align: left;
 }

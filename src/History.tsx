@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import DiskExplorer from "./DiskExplorer";
 
 interface ResourcePoint {
   ts: number;
@@ -279,6 +280,7 @@ export default function History() {
       )}
 
       <StorageBreakdown disks={disks} />
+      <DiskExplorer />
 
       {[...diskByMount.entries()].map(([mount, pts]) => {
         const totalGB = pts.length

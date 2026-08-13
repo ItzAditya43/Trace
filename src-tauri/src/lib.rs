@@ -6,6 +6,7 @@ mod profiles;
 mod projects;
 mod namespace_control;
 mod network_control;
+mod storage_explorer;
 mod system_control;
 mod systemd_control;
 mod update_check;
@@ -119,6 +120,17 @@ fn poll_clipboard(app_state: &AppState) {
     }
     history.push_front(trimmed.to_string());
     history.truncate(CLIPBOARD_HISTORY_LIMIT);
+}
+
+/// Excludes mount points that aren't real storage a user would care about:
+/// AppImage FUSE mounts (`/tmp/.mount_*`), snap loopback mounts, and other
+/// transient bind/overlay mounts that show up as "disks" but are actually
+/// just an app's own squashfs image mounted for its lifetime.
+fn is_ephemeral_mount(mount_point: &str) -> bool {
+    mount_point.contains("/.mount_")
+        || mount_point.starts_with("/snap/")
+        || mount_point.starts_with("/var/lib/docker/")
+        || mount_point.starts_with("/run/")
 }
 
 fn read_amd_gpus() -> Vec<GpuInfo> {
@@ -311,6 +323,7 @@ fn take_snapshot(state: &AppState) -> Snapshot {
     let disks = Disks::new_with_refreshed_list();
     let disk_infos = disks
         .iter()
+        .filter(|d| !is_ephemeral_mount(&d.mount_point().to_string_lossy()))
         .map(|d| DiskInfo {
             name: d.name().to_string_lossy().to_string(),
             mount_point: d.mount_point().to_string_lossy().to_string(),
@@ -1065,6 +1078,11 @@ fn list_namespaces(state: tauri::State<AppState>) -> Vec<namespace_control::Name
     namespace_control::list_namespaces(&sys)
 }
 
+#[tauri::command]
+async fn scan_folder_sizes(path: String) -> Result<Vec<storage_explorer::FolderEntry>, String> {
+    storage_explorer::scan_folder(&path).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1146,7 +1164,8 @@ pub fn run() {
             close_window,
             set_gpu_clock_lock,
             reset_gpu_clock_lock,
-            list_namespaces
+            list_namespaces,
+            scan_folder_sizes
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
