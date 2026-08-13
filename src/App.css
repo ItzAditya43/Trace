@@ -663,6 +663,12 @@ body {
   margin-top: 10px;
 }
 
+.port-result-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .core-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(28px, 1fr));

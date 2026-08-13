@@ -78,6 +78,8 @@ function ProcessControl() {
   const [percent, setPercent] = useState("50");
   const [mb, setMb] = useState("512");
   const [nice, setNice] = useState("0");
+  const [ioClass, setIoClass] = useState("2");
+  const [ioLevel, setIoLevel] = useState("4");
   const [result, setResult] = useState<ActionResult | null>(null);
 
   useEffect(() => {
@@ -172,6 +174,31 @@ function ProcessControl() {
                 .split(",")
                 .map((c) => parseInt(c.trim(), 10))
                 .filter((n) => Number.isFinite(n)),
+            })
+          }
+        >
+          Apply
+        </button>
+      </div>
+
+      <div className="control-row">
+        <label>IO class (1 realtime / 2 best-effort / 3 idle) + level (0-7)</label>
+        <input
+          className="port-input small"
+          value={ioClass}
+          onChange={(e) => setIoClass(e.target.value)}
+        />
+        <input
+          className="port-input small"
+          value={ioLevel}
+          onChange={(e) => setIoLevel(e.target.value)}
+        />
+        <button
+          className="ctl-btn"
+          onClick={() =>
+            act("set_ionice", {
+              class: parseInt(ioClass, 10),
+              level: parseInt(ioLevel, 10),
             })
           }
         >
@@ -356,6 +383,8 @@ function DockerControl() {
 
 function GpuControl() {
   const [watts, setWatts] = useState("60");
+  const [minClock, setMinClock] = useState("300");
+  const [maxClock, setMaxClock] = useState("1800");
   const [result, setResult] = useState<ActionResult | null>(null);
 
   async function act(cmd: string, args: Record<string, unknown>) {
@@ -398,10 +427,507 @@ function GpuControl() {
           Apply
         </button>
       </div>
+      <div className="control-row">
+        <label>Lock GPU clock range (MHz, NVIDIA only)</label>
+        <input className="port-input small" value={minClock} onChange={(e) => setMinClock(e.target.value)} />
+        <input className="port-input small" value={maxClock} onChange={(e) => setMaxClock(e.target.value)} />
+        <button
+          className="ctl-btn"
+          onClick={() =>
+            act("set_gpu_clock_lock", {
+              minMhz: parseInt(minClock, 10),
+              maxMhz: parseInt(maxClock, 10),
+            })
+          }
+        >
+          Lock
+        </button>
+        <button className="ctl-btn" onClick={() => act("reset_gpu_clock_lock", {})}>
+          Reset to default
+        </button>
+      </div>
+
       <StatusLine result={result} />
       <p className="diagnose-hint">
         Most GPU controls require root and a supported driver — expect
-        permission errors unless running with elevated privileges.
+        permission errors unless running with elevated privileges. Clock
+        locking only accepts values within the driver's reported supported
+        range (see clocks.max.graphics) — out-of-range requests are rejected,
+        not clamped silently, and the result shows the driver's read-back of
+        what was actually applied.
+      </p>
+    </section>
+  );
+}
+
+function SystemControl() {
+  const [brightness, setBrightnessState] = useState<number | null>(null);
+  const [volume, setVolumeState] = useState<{ percent: number; muted: boolean } | null>(
+    null
+  );
+  const [result, setResult] = useState<ActionResult | null>(null);
+
+  async function refresh() {
+    const b = await invoke<{ percent: number } | null>("get_brightness");
+    setBrightnessState(b?.percent ?? null);
+    const v = await invoke<{ percent: number; muted: boolean } | null>("get_volume");
+    setVolumeState(v);
+  }
+
+  useEffect(() => {
+    refresh();
+  }, []);
+
+  async function act(cmd: string, args: Record<string, unknown>) {
+    try {
+      const r = await invoke<ActionResult>(cmd, args);
+      setResult(r);
+      refresh();
+    } catch (e) {
+      setResult({ ok: false, message: String(e) });
+    }
+  }
+
+  return (
+    <section className="panel">
+      <h2>Brightness &amp; Volume</h2>
+      {brightness !== null && (
+        <div className="control-row">
+          <label>Brightness</label>
+          <input
+            type="range"
+            min={1}
+            max={100}
+            value={brightness}
+            onChange={(e) => act("set_brightness", { percent: parseInt(e.target.value, 10) })}
+          />
+          <span>{brightness}%</span>
+        </div>
+      )}
+      {volume && (
+        <div className="control-row">
+          <label>Volume</label>
+          <input
+            type="range"
+            min={0}
+            max={150}
+            value={volume.percent}
+            onChange={(e) => act("set_volume", { percent: parseInt(e.target.value, 10) })}
+          />
+          <span>{volume.percent}%</span>
+          <button className="ctl-btn-sm" onClick={() => act("toggle_mute", {})}>
+            {volume.muted ? "Unmute" : "Mute"}
+          </button>
+        </div>
+      )}
+      <StatusLine result={result} />
+    </section>
+  );
+}
+
+function StartupImpact() {
+  const [entries, setEntries] = useState<{ unit: string; time_ms: number }[]>([]);
+
+  useEffect(() => {
+    invoke<{ unit: string; time_ms: number }[]>("startup_impact").then(setEntries);
+  }, []);
+
+  if (entries.length === 0) return null;
+
+  const maxMs = Math.max(...entries.map((e) => e.time_ms), 1);
+
+  return (
+    <section className="panel">
+      <h2>Startup Impact</h2>
+      {entries.slice(0, 15).map((e) => (
+        <div key={e.unit} className="bar-row">
+          <span className="bar-label" title={e.unit}>
+            {e.unit.length > 22 ? e.unit.slice(0, 22) + "…" : e.unit}
+          </span>
+          <div className="bar-track">
+            <div
+              className="bar-fill bar-ok"
+              style={{ width: `${(e.time_ms / maxMs) * 100}%` }}
+            />
+          </div>
+          <span className="bar-value">{e.time_ms}ms</span>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function AutostartControl() {
+  const [entries, setEntries] = useState<
+    { filename: string; name: string; enabled: boolean; system_wide: boolean }[]
+  >([]);
+  const [result, setResult] = useState<ActionResult | null>(null);
+
+  async function refresh() {
+    const e = await invoke<typeof entries>("list_autostart");
+    setEntries(e);
+  }
+
+  useEffect(() => {
+    refresh();
+  }, []);
+
+  async function toggle(filename: string, enabled: boolean) {
+    try {
+      const r = await invoke<ActionResult>("set_autostart_enabled", { filename, enabled });
+      setResult(r);
+      refresh();
+    } catch (e) {
+      setResult({ ok: false, message: String(e) });
+    }
+  }
+
+  if (entries.length === 0) return null;
+
+  return (
+    <section className="panel">
+      <h2>Autostart Apps</h2>
+      <div className="unit-list">
+        {entries.map((e) => (
+          <div key={e.filename} className="unit-row">
+            <span className="unit-name">{e.name}</span>
+            <span className={"unit-state " + (e.enabled ? "unit-active" : "unit-inactive")}>
+              {e.enabled ? "enabled" : "disabled"}
+            </span>
+            <div className="unit-buttons">
+              <button
+                className="ctl-btn-sm"
+                onClick={() => toggle(e.filename, !e.enabled)}
+              >
+                {e.enabled ? "Disable" : "Enable"}
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+      <StatusLine result={result} />
+    </section>
+  );
+}
+
+function ClipboardHistory() {
+  const [items, setItems] = useState<string[]>([]);
+
+  useEffect(() => {
+    const load = () => invoke<string[]>("get_clipboard_history").then(setItems);
+    load();
+    const id = setInterval(load, 10000);
+    return () => clearInterval(id);
+  }, []);
+
+  if (items.length === 0) return null;
+
+  return (
+    <section className="panel">
+      <h2>Clipboard History</h2>
+      <div className="unit-list">
+        {items.map((text, i) => (
+          <div key={i} className="unit-row">
+            <span className="unit-name" title={text}>
+              {text.length > 80 ? text.slice(0, 80) + "…" : text}
+            </span>
+          </div>
+        ))}
+      </div>
+      <p className="diagnose-hint">Polled every 10s, last 50 entries kept in memory.</p>
+    </section>
+  );
+}
+
+interface ConnectionInfo {
+  pid: number;
+  process_name: string;
+  local_addr: string;
+  remote_addr: string;
+  state: string;
+}
+
+function NetworkControl() {
+  const [connections, setConnections] = useState<ConnectionInfo[]>([]);
+  const [interfaces, setInterfaces] = useState<string[]>([]);
+  const [iface, setIface] = useState("");
+  const [rate, setRate] = useState("2000");
+  const [blockPid, setBlockPid] = useState("");
+  const [result, setResult] = useState<ActionResult | null>(null);
+
+  async function refresh() {
+    const [conns, ifaces] = await Promise.all([
+      invoke<ConnectionInfo[]>("list_connections", { pid: null }),
+      invoke<string[]>("list_network_interfaces"),
+    ]);
+    setConnections(conns.filter((c) => c.state === "ESTABLISHED").slice(0, 30));
+    setInterfaces(ifaces);
+    if (!iface && ifaces.length > 0) setIface(ifaces[0]);
+  }
+
+  useEffect(() => {
+    refresh();
+  }, []);
+
+  async function act(cmd: string, args: Record<string, unknown>) {
+    try {
+      const r = await invoke<ActionResult>(cmd, args);
+      setResult(r);
+    } catch (e) {
+      setResult({ ok: false, message: String(e) });
+    }
+  }
+
+  return (
+    <section className="panel">
+      <h2>Network</h2>
+      <div className="unit-list">
+        {connections.map((c, i) => (
+          <div key={i} className="unit-row">
+            <span className="unit-name">
+              {c.process_name} (PID {c.pid})
+            </span>
+            <span className="unit-state">{c.remote_addr}</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="control-row">
+        <label>Limit interface bandwidth</label>
+        <select className="port-input small" value={iface} onChange={(e) => setIface(e.target.value)}>
+          {interfaces.map((i) => (
+            <option key={i} value={i}>{i}</option>
+          ))}
+        </select>
+        <input className="port-input small" value={rate} onChange={(e) => setRate(e.target.value)} placeholder="kbit/s" />
+        <button className="ctl-btn" onClick={() => act("limit_interface_bandwidth", { iface, rateKbit: parseInt(rate, 10) })}>
+          Apply
+        </button>
+        <button className="ctl-btn" onClick={() => act("clear_interface_bandwidth_limit", { iface })}>
+          Clear
+        </button>
+      </div>
+
+      <div className="control-row">
+        <label>Block network for PID (whole cgroup)</label>
+        <input className="port-input small" value={blockPid} onChange={(e) => setBlockPid(e.target.value)} placeholder="PID" />
+        <button className="ctl-btn ctl-danger" onClick={() => act("block_process_network", { pid: parseInt(blockPid, 10) })}>
+          Block
+        </button>
+        <button className="ctl-btn" onClick={() => act("unblock_all_network", {})}>
+          Unblock All
+        </button>
+      </div>
+
+      <StatusLine result={result} />
+      <p className="diagnose-hint">
+        Bandwidth limiting and network blocking need CAP_NET_ADMIN (usually root) —
+        you'll get a clear error otherwise. Blocking affects the process's whole
+        cgroup, not just one PID.
+      </p>
+    </section>
+  );
+}
+
+interface UsbDevice {
+  device_id: string;
+  vendor_id: string;
+  product_id: string;
+  manufacturer: string;
+  product: string;
+  authorized: boolean;
+}
+
+function UsbControl() {
+  const [devices, setDevices] = useState<UsbDevice[]>([]);
+  const [result, setResult] = useState<ActionResult | null>(null);
+
+  async function refresh() {
+    setDevices(await invoke<UsbDevice[]>("list_usb_devices"));
+  }
+
+  useEffect(() => {
+    refresh();
+  }, []);
+
+  async function toggle(deviceId: string, authorized: boolean) {
+    try {
+      const r = await invoke<ActionResult>("set_usb_authorized", { deviceId, authorized });
+      setResult(r);
+      refresh();
+    } catch (e) {
+      setResult({ ok: false, message: String(e) });
+    }
+  }
+
+  if (devices.length === 0) return null;
+
+  return (
+    <section className="panel">
+      <h2>USB Devices</h2>
+      <div className="unit-list">
+        {devices.map((d) => (
+          <div key={d.device_id} className="unit-row">
+            <span className="unit-name">
+              {d.manufacturer || d.vendor_id} {d.product} ({d.device_id})
+            </span>
+            <span className={"unit-state " + (d.authorized ? "unit-active" : "unit-inactive")}>
+              {d.authorized ? "authorized" : "blocked"}
+            </span>
+            <div className="unit-buttons">
+              <button className="ctl-btn-sm ctl-danger" onClick={() => toggle(d.device_id, !d.authorized)}>
+                {d.authorized ? "Deauthorize" : "Authorize"}
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+      <StatusLine result={result} />
+      <p className="diagnose-hint">
+        Deauthorizing your keyboard/mouse this way can lock you out until you
+        unplug and replug it — double-check the device first.
+      </p>
+    </section>
+  );
+}
+
+interface WindowInfo {
+  address: string;
+  class: string;
+  title: string;
+  pid: number;
+  workspace: { id: number; name: string };
+}
+
+function WindowControl() {
+  const [windows, setWindows] = useState<WindowInfo[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<ActionResult | null>(null);
+  const [targetWs, setTargetWs] = useState("1");
+
+  async function refresh() {
+    try {
+      setWindows(await invoke<WindowInfo[]>("list_windows"));
+      setError(null);
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  useEffect(() => {
+    refresh();
+  }, []);
+
+  async function act(cmd: string, args: Record<string, unknown>) {
+    try {
+      const r = await invoke<ActionResult>(cmd, args);
+      setResult(r);
+      refresh();
+    } catch (e) {
+      setResult({ ok: false, message: String(e) });
+    }
+  }
+
+  if (error) {
+    return (
+      <section className="panel">
+        <h2>Windows &amp; Workspaces</h2>
+        <p className="diagnose-hint">{error}</p>
+      </section>
+    );
+  }
+
+  if (!windows) return null;
+
+  return (
+    <section className="panel">
+      <h2>Windows &amp; Workspaces</h2>
+      <div className="unit-list">
+        {windows.map((w) => (
+          <div key={w.address} className="unit-row">
+            <span className="unit-name" title={w.title}>
+              {w.class} — ws {w.workspace.name}
+            </span>
+            <div className="unit-buttons">
+              <input
+                className="port-input small"
+                style={{ width: 40 }}
+                value={targetWs}
+                onChange={(e) => setTargetWs(e.target.value)}
+              />
+              <button
+                className="ctl-btn-sm"
+                onClick={() =>
+                  act("move_window_to_workspace", {
+                    address: w.address,
+                    workspace: parseInt(targetWs, 10),
+                  })
+                }
+              >
+                Move
+              </button>
+              <button className="ctl-btn-sm ctl-danger" onClick={() => act("close_window", { address: w.address })}>
+                Close
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+      <StatusLine result={result} />
+    </section>
+  );
+}
+
+interface NamespaceGroup {
+  ns_type: string;
+  inode: string;
+  pids: number[];
+  process_names: string[];
+}
+
+function NamespaceControl() {
+  const [groups, setGroups] = useState<NamespaceGroup[]>([]);
+  const [filter, setFilter] = useState<string>("net");
+
+  useEffect(() => {
+    invoke<NamespaceGroup[]>("list_namespaces").then(setGroups);
+  }, []);
+
+  const types = [...new Set(groups.map((g) => g.ns_type))];
+  const shown = groups.filter((g) => g.ns_type === filter);
+
+  return (
+    <section className="panel">
+      <h2>Namespaces</h2>
+      <div className="range-picker">
+        {types.map((t) => (
+          <button
+            key={t}
+            className={t === filter ? "range-btn active" : "range-btn"}
+            onClick={() => setFilter(t)}
+          >
+            {t}
+          </button>
+        ))}
+      </div>
+      <div className="unit-list">
+        {shown.map((g) => (
+          <div key={g.inode} className="unit-row">
+            <span className="unit-name">
+              {g.ns_type}:[{g.inode}] — {g.pids.length} process(es)
+            </span>
+            <span className="unit-state" title={g.process_names.join(", ")}>
+              {g.process_names.slice(0, 3).join(", ")}
+              {g.process_names.length > 3 ? "…" : ""}
+            </span>
+          </div>
+        ))}
+      </div>
+      <p className="diagnose-hint">
+        Live view of which processes share a kernel namespace — same idea as
+        `lsns`, but grouped and filterable. A namespace with only one or two
+        processes is usually a container or sandbox boundary worth a closer
+        look.
       </p>
     </section>
   );
@@ -548,9 +1074,17 @@ export default function Control() {
   return (
     <div>
       <ProcessControl />
+      <SystemControl />
+      <NetworkControl />
       <ServiceControl />
       <DockerControl />
       <GpuControl />
+      <UsbControl />
+      <WindowControl />
+      <NamespaceControl />
+      <AutostartControl />
+      <StartupImpact />
+      <ClipboardHistory />
       <ProfilesControl />
       <ActionLog />
     </div>

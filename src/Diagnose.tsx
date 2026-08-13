@@ -56,6 +56,17 @@ export default function Diagnose() {
     }
   }
 
+  async function killPort() {
+    const port = parseInt(portQuery, 10);
+    if (!port) return;
+    try {
+      await invoke("kill_process_on_port", { port, force: false });
+      await lookupPort();
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
   return (
     <div>
       <section className="panel diagnose-panel">
@@ -129,7 +140,12 @@ export default function Diagnose() {
                   <span>
                     {o.process_name} (PID {o.pid})
                   </span>
-                  <span>{o.local_address}</span>
+                  <span className="port-result-actions">
+                    {o.local_address}
+                    <button className="ctl-btn-sm ctl-danger" onClick={killPort}>
+                      Kill
+                    </button>
+                  </span>
                 </div>
               ))
             )}

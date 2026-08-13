@@ -4,8 +4,13 @@ mod docker_control;
 mod gpu_control;
 mod profiles;
 mod projects;
+mod namespace_control;
+mod network_control;
+mod system_control;
 mod systemd_control;
 mod update_check;
+mod usb_control;
+mod window_control;
 
 use serde::Serialize;
 use std::fs;
@@ -90,6 +95,29 @@ struct AppState {
     last_net: Mutex<std::collections::HashMap<String, NetSample>>,
     db: db::Db,
     last_snapshot: Mutex<Option<Snapshot>>,
+    clipboard_history: Mutex<std::collections::VecDeque<String>>,
+}
+
+const CLIPBOARD_HISTORY_LIMIT: usize = 50;
+
+fn poll_clipboard(app_state: &AppState) {
+    let Ok(out) = Command::new("wl-paste").args(["--type", "text", "--no-newline"]).output() else {
+        return;
+    };
+    if !out.status.success() {
+        return;
+    }
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    let trimmed = text.trim();
+    if trimmed.is_empty() || trimmed.len() > 20_000 {
+        return;
+    }
+    let mut history = app_state.clipboard_history.lock().unwrap();
+    if history.front().map(|s| s.as_str()) == Some(trimmed) {
+        return;
+    }
+    history.push_front(trimmed.to_string());
+    history.truncate(CLIPBOARD_HISTORY_LIMIT);
 }
 
 fn read_amd_gpus() -> Vec<GpuInfo> {
@@ -850,6 +878,191 @@ fn who_is_using_port(state: tauri::State<AppState>, port: u16) -> Vec<PortOwner>
     owners
 }
 
+#[tauri::command]
+fn kill_process_on_port(
+    state: tauri::State<AppState>,
+    port: u16,
+    force: bool,
+) -> control_process::ActionResult {
+    let owners = who_is_using_port(tauri::State::clone(&state), port);
+    if owners.is_empty() {
+        return control_process::ActionResult {
+            ok: false,
+            message: format!("Nothing is listening on port {port}"),
+        };
+    }
+    let mut messages = Vec::new();
+    let mut all_ok = true;
+    for o in &owners {
+        let r = control_process::kill(o.pid, force);
+        all_ok &= r.ok;
+        messages.push(format!("{} (PID {}): {}", o.process_name, o.pid, r.message));
+    }
+    let r = control_process::ActionResult {
+        ok: all_ok,
+        message: messages.join("; "),
+    };
+    log_action(&state, "kill_process_on_port", r.ok, &r.message);
+    r
+}
+
+#[tauri::command]
+fn set_ionice(state: tauri::State<AppState>, pid: u32, class: u32, level: u32) -> control_process::ActionResult {
+    let r = system_control::set_ionice(pid, class, level);
+    log_action(&state, "set_ionice", r.ok, &r.message);
+    control_process::ActionResult { ok: r.ok, message: r.message }
+}
+
+#[tauri::command]
+fn get_brightness() -> Option<system_control::BrightnessInfo> {
+    system_control::get_brightness()
+}
+
+#[tauri::command]
+fn set_brightness(state: tauri::State<AppState>, percent: u32) -> control_process::ActionResult {
+    let r = system_control::set_brightness(percent);
+    log_action(&state, "set_brightness", r.ok, &r.message);
+    control_process::ActionResult { ok: r.ok, message: r.message }
+}
+
+#[tauri::command]
+fn get_volume() -> Option<system_control::VolumeInfo> {
+    system_control::get_volume()
+}
+
+#[tauri::command]
+fn set_volume(state: tauri::State<AppState>, percent: u32) -> control_process::ActionResult {
+    let r = system_control::set_volume(percent);
+    log_action(&state, "set_volume", r.ok, &r.message);
+    control_process::ActionResult { ok: r.ok, message: r.message }
+}
+
+#[tauri::command]
+fn toggle_mute(state: tauri::State<AppState>) -> control_process::ActionResult {
+    let r = system_control::toggle_mute();
+    log_action(&state, "toggle_mute", r.ok, &r.message);
+    control_process::ActionResult { ok: r.ok, message: r.message }
+}
+
+#[tauri::command]
+fn startup_impact() -> Vec<system_control::StartupEntry> {
+    system_control::startup_impact()
+}
+
+#[tauri::command]
+fn list_autostart() -> Vec<system_control::AutostartEntry> {
+    system_control::list_autostart()
+}
+
+#[tauri::command]
+fn set_autostart_enabled(state: tauri::State<AppState>, filename: String, enabled: bool) -> control_process::ActionResult {
+    let r = system_control::set_autostart_enabled(&filename, enabled);
+    log_action(&state, "set_autostart_enabled", r.ok, &r.message);
+    control_process::ActionResult { ok: r.ok, message: r.message }
+}
+
+#[tauri::command]
+fn get_clipboard_history(state: tauri::State<AppState>) -> Vec<String> {
+    state.clipboard_history.lock().unwrap().iter().cloned().collect()
+}
+
+#[tauri::command]
+fn list_connections(state: tauri::State<AppState>, pid: Option<u32>) -> Vec<network_control::ConnectionInfo> {
+    let sys = state.sys.lock().unwrap();
+    network_control::list_connections(&sys, pid)
+}
+
+#[tauri::command]
+fn list_network_interfaces() -> Vec<String> {
+    network_control::list_interfaces()
+}
+
+#[tauri::command]
+fn limit_interface_bandwidth(state: tauri::State<AppState>, iface: String, rate_kbit: u32) -> control_process::ActionResult {
+    let r = network_control::limit_interface(&iface, rate_kbit);
+    log_action(&state, "limit_interface_bandwidth", r.ok, &r.message);
+    control_process::ActionResult { ok: r.ok, message: r.message }
+}
+
+#[tauri::command]
+fn clear_interface_bandwidth_limit(state: tauri::State<AppState>, iface: String) -> control_process::ActionResult {
+    let r = network_control::clear_interface_limit(&iface);
+    log_action(&state, "clear_interface_bandwidth_limit", r.ok, &r.message);
+    control_process::ActionResult { ok: r.ok, message: r.message }
+}
+
+#[tauri::command]
+fn block_process_network(state: tauri::State<AppState>, pid: u32) -> control_process::ActionResult {
+    let r = network_control::block_process_network(pid);
+    log_action(&state, "block_process_network", r.ok, &r.message);
+    control_process::ActionResult { ok: r.ok, message: r.message }
+}
+
+#[tauri::command]
+fn unblock_all_network(state: tauri::State<AppState>) -> control_process::ActionResult {
+    let r = network_control::unblock_all_network();
+    log_action(&state, "unblock_all_network", r.ok, &r.message);
+    control_process::ActionResult { ok: r.ok, message: r.message }
+}
+
+#[tauri::command]
+fn list_usb_devices() -> Vec<usb_control::UsbDevice> {
+    usb_control::list_devices()
+}
+
+#[tauri::command]
+fn set_usb_authorized(state: tauri::State<AppState>, device_id: String, authorized: bool) -> control_process::ActionResult {
+    let r = usb_control::set_authorized(&device_id, authorized);
+    log_action(&state, "set_usb_authorized", r.ok, &r.message);
+    control_process::ActionResult { ok: r.ok, message: r.message }
+}
+
+#[tauri::command]
+fn list_windows() -> Result<Vec<window_control::WindowInfo>, String> {
+    window_control::list_windows()
+}
+
+#[tauri::command]
+fn move_window_to_workspace(state: tauri::State<AppState>, address: String, workspace: i32) -> control_process::ActionResult {
+    let r = window_control::move_window_to_workspace(&address, workspace);
+    log_action(&state, "move_window_to_workspace", r.ok, &r.message);
+    control_process::ActionResult { ok: r.ok, message: r.message }
+}
+
+#[tauri::command]
+fn focus_workspace(state: tauri::State<AppState>, workspace: i32) -> control_process::ActionResult {
+    let r = window_control::focus_workspace(workspace);
+    log_action(&state, "focus_workspace", r.ok, &r.message);
+    control_process::ActionResult { ok: r.ok, message: r.message }
+}
+
+#[tauri::command]
+fn close_window(state: tauri::State<AppState>, address: String) -> control_process::ActionResult {
+    let r = window_control::close_window(&address);
+    log_action(&state, "close_window", r.ok, &r.message);
+    control_process::ActionResult { ok: r.ok, message: r.message }
+}
+
+#[tauri::command]
+fn set_gpu_clock_lock(state: tauri::State<AppState>, min_mhz: u32, max_mhz: u32) -> Result<String, String> {
+    let r = gpu_control::set_gpu_clock_lock(min_mhz, max_mhz);
+    log_action(&state, "set_gpu_clock_lock", r.is_ok(), r.as_deref().unwrap_or_else(|e| e));
+    r
+}
+
+#[tauri::command]
+fn reset_gpu_clock_lock(state: tauri::State<AppState>) -> Result<String, String> {
+    let r = gpu_control::reset_gpu_clock_lock();
+    log_action(&state, "reset_gpu_clock_lock", r.is_ok(), r.as_deref().unwrap_or_else(|e| e));
+    r
+}
+
+#[tauri::command]
+fn list_namespaces(state: tauri::State<AppState>) -> Vec<namespace_control::NamespaceGroup> {
+    let sys = state.sys.lock().unwrap();
+    namespace_control::list_namespaces(&sys)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -859,6 +1072,7 @@ pub fn run() {
             last_net: Mutex::new(std::collections::HashMap::new()),
             db: db::Db::open(),
             last_snapshot: Mutex::new(None),
+            clipboard_history: Mutex::new(std::collections::VecDeque::new()),
         })
         .setup(|app| {
             profiles::ensure_default_profiles();
@@ -868,6 +1082,7 @@ pub fn run() {
                     let state = handle.state::<AppState>();
                     let snap = take_snapshot(&state);
                     record_snapshot(&state, &snap);
+                    poll_clipboard(&state);
                 }
                 std::thread::sleep(std::time::Duration::from_secs(10));
             });
@@ -903,7 +1118,33 @@ pub fn run() {
             apply_profile,
             undo_profile,
             get_action_log,
-            check_for_update
+            check_for_update,
+            kill_process_on_port,
+            set_ionice,
+            get_brightness,
+            set_brightness,
+            get_volume,
+            set_volume,
+            toggle_mute,
+            startup_impact,
+            list_autostart,
+            set_autostart_enabled,
+            get_clipboard_history,
+            list_connections,
+            list_network_interfaces,
+            limit_interface_bandwidth,
+            clear_interface_bandwidth_limit,
+            block_process_network,
+            unblock_all_network,
+            list_usb_devices,
+            set_usb_authorized,
+            list_windows,
+            move_window_to_workspace,
+            focus_workspace,
+            close_window,
+            set_gpu_clock_lock,
+            reset_gpu_clock_lock,
+            list_namespaces
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
