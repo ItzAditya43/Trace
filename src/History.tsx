@@ -39,7 +39,7 @@ function LineChart({
   color,
   unit = "%",
   rangeSecs,
-  height = 90,
+  height = 170,
 }: {
   points: { ts: number; v: number }[];
   max: number;

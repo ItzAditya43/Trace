@@ -213,15 +213,19 @@ function App() {
       <section className="panel">
         <h2>Cores</h2>
         <div className="core-grid">
-          {snapshot.per_core_usage.map((usage, i) => (
-            <div key={i} className="core-cell">
-              <div
-                className="core-fill"
-                style={{ height: `${Math.min(usage, 100)}%` }}
-              />
-              <span className="core-label">{i}</span>
-            </div>
-          ))}
+          {snapshot.per_core_usage.map((usage, i) => {
+            const level = usage > 85 ? "danger" : usage > 60 ? "warn" : "ok";
+            return (
+              <div key={i} className="core-cell">
+                <div
+                  className={`core-fill core-fill-${level}`}
+                  style={{ height: `${Math.min(usage, 100)}%` }}
+                />
+                <span className="core-percent">{usage.toFixed(0)}</span>
+                <span className="core-label">core {i}</span>
+              </div>
+            );
+          })}
         </div>
       </section>
 
