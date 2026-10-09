@@ -2,6 +2,7 @@ import { useContext, useEffect, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { NavContext } from "./nav";
 import AppSettings from "./AppSettings";
+import { ScheduledJobs, TimersControl } from "./Quick";
 import { invoke } from "@tauri-apps/api/core";
 import Automation from "./Automation";
 import Packages from "./Packages";
@@ -164,6 +165,9 @@ function ProcessControl() {
         </button>
         <button className="ctl-btn" onClick={() => act("resume_process", {})}>
           Resume
+        </button>
+        <button className="ctl-btn" onClick={() => act("watch_process", {})}>
+          Tell me when it's done
         </button>
         <button
           className="ctl-btn ctl-danger"
@@ -1279,6 +1283,7 @@ export default function Control() {
       {section === "power" && (
         <>
           <SessionControl />
+          <TimersControl />
           <CpuPowerControl />
           <FanControl />
           <MemoryTuningControl />
@@ -1306,6 +1311,7 @@ export default function Control() {
         <>
           <ServiceControl />
           <DockerControl />
+          <ScheduledJobs />
           <AutostartControl />
           <StartupImpact />
         </>

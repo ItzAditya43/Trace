@@ -14,6 +14,7 @@ Built with Tauri (Rust) + React/TypeScript.
 - **Overview** — health score with the top issues, live tiles, CPU (per-core), RAM, swap, stall time, GPU, temps, network, battery, disks, top processes
 - **Memory** — accounts for every byte of RAM by purpose, per-app RAM + swap with shared pages split fairly, growth over time, and per-app actions: restart, freeze, quit, and CPU / RAM limits (no password needed)
 - **Activity** — which apps are using the disk and the network right now, and which wake the CPU most
+- **Hardware** — every sensor the machine reports with live trends, fans, CPU power, both graphics cards with which apps are using them (and whether the dedicated one is powered down), built-in and external-monitor brightness, wireless device batteries, and display arrangement: resolution, refresh, scale, rotation, position, mirroring, adaptive sync, saved layouts that apply themselves, and a night-light schedule
 - **Health** — 0–100 score with plain-language issues, reboot-needed detection, failed services, battery wear, boot-time trend, drive SMART health, out-of-memory kills and recent journal errors
 - **History** — hover-to-inspect charts over 1 hour to 30 days with warnings marked on the timeline, plus a disk usage explorer
 - **Logs** — a daily / weekly / monthly / yearly logbook: screen time per app, apps that ran, CPU/RAM/temperature, battery drain and cycles, network data used, crashes, sleep / lid / login times, package changes, warnings, alerts sent and control actions; any period exports as JSON
@@ -31,9 +32,11 @@ Built with Tauri (Rust) + React/TypeScript.
   - *Network* — VPNs (connect, rename, auto-connect, delete; add from a file or from the VPN Gate public list; connect to the fastest server in a country; kill switch; only-some-apps-through-the-VPN; public address check), Wi-Fi and Bluetooth, firewalld ports, bandwidth limits, per-app network blocking
   - *Display & Devices* — resolution, refresh rate, scale and night light (Hyprland), audio output/input, USB authorization, clipboard history
   - *Services* — systemd units and Docker containers with their logs and live stats, autostart apps, startup impact
-  - *Automation* — profiles (with a builder, import, and "apply settings preset" steps), memory rules, schedules by time or app launch, alerts and their history, start at login, run in the tray, and a full audit log
+  - *Automation* — profiles (with a builder, import, and "apply settings preset" steps), memory rules, schedules by time, app launch, charger, battery level, Wi-Fi network or monitor, sleeping apps you aren't using, timers, pinned switches, alerts and their history, start at login, run in the tray, and a full audit log
   - *Packages & Cleanup* — pending updates, package cache and orphan cleanup, trash / journal / crash-dump / thumbnail cleanup
 - **Search** — Ctrl+K searches settings, pages, running programs, services and the logbook
+
+From a terminal or a key binding: `trace preset gaming`, `trace freeze brave`, `trace page hardware`, `trace panic`.
 
 Trace keeps running in the tray when its window is closed (so the logbook, rules and alerts keep working), and a second launch brings the existing window back instead of starting twice.
 

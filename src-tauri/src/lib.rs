@@ -6,7 +6,9 @@ mod control_process;
 mod db;
 mod desktop;
 mod docker_control;
+mod extras;
 mod gpu_control;
+mod hardware;
 mod health;
 mod hypr;
 mod logbook;
@@ -123,6 +125,10 @@ struct AppState {
     battery_prev: Mutex<logbook::BatteryPrev>,
     /// The tray icon and the menu line that shows live numbers, once built.
     tray: Mutex<Option<TrayHandles>>,
+    gpu_state: Mutex<hardware::GpuState>,
+    display_state: Mutex<hardware::DisplayState>,
+    pending: Mutex<extras::Pending>,
+    sleepers: Mutex<extras::SleeperState>,
     net_totals: Mutex<std::collections::HashMap<String, (u64, u64)>>,
 }
 
@@ -715,7 +721,7 @@ fn as_result(r: control_process::ActionResult) -> Result<String, String> {
     if r.ok { Ok(r.message) } else { Err(r.message) }
 }
 
-async fn execute_action(state: &AppState, action: &profiles::Action) -> Result<String, String> {
+async fn execute_action(state: &AppState, action: &profiles::Action, unattended: bool) -> Result<String, String> {
     use profiles::Action::*;
     match action {
         FreezeProcess { pid } => {
@@ -753,7 +759,9 @@ async fn execute_action(state: &AppState, action: &profiles::Action) -> Result<S
             if changes.is_empty() {
                 return Ok("Everything in the preset was already set".to_string());
             }
-            let results = tweaks::apply(&state.db, &changes, &format!("preset:{preset}"), None);
+            // By itself, Trace never raises a password prompt: the parts of a
+            // preset that need one are reported as skipped instead.
+            let results = tweaks::apply_with(&state.db, &changes, &format!("preset:{preset}"), None, !unattended);
             let failed: Vec<String> = results.iter().filter(|r| !r.ok).map(|r| format!("{} ({})", r.title, r.message)).collect();
             if failed.is_empty() {
                 Ok(format!("Applied {} setting(s)", results.len()))
@@ -909,10 +917,10 @@ async fn apply_profile(
     profile: profiles::Profile,
     dry_run: bool,
 ) -> Result<Vec<ActionOutcome>, String> {
-    Ok(run_profile(&state, &profile, dry_run).await)
+    Ok(run_profile(&state, &profile, dry_run, false).await)
 }
 
-async fn run_profile(state: &AppState, profile: &profiles::Profile, dry_run: bool) -> Vec<ActionOutcome> {
+async fn run_profile(state: &AppState, profile: &profiles::Profile, dry_run: bool, unattended: bool) -> Vec<ActionOutcome> {
     let mut outcomes = Vec::new();
     for action in &profile.actions {
         let description = action.describe();
@@ -924,7 +932,7 @@ async fn run_profile(state: &AppState, profile: &profiles::Profile, dry_run: boo
             });
             continue;
         }
-        let result = execute_action(state, action).await;
+        let result = execute_action(state, action, unattended).await;
         let (ok, message) = match &result {
             Ok(m) => (true, m.clone()),
             Err(e) => (false, e.clone()),
@@ -951,7 +959,7 @@ async fn undo_profile(
             continue;
         };
         let description = inverse.describe();
-        let result = execute_action(&state, &inverse).await;
+        let result = execute_action(&state, &inverse, false).await;
         let (ok, message) = match &result {
             Ok(m) => (true, m.clone()),
             Err(e) => (false, e.clone()),
@@ -1512,6 +1520,208 @@ fn get_notifications(state: tauri::State<AppState>) -> Vec<logbook::Notification
 }
 
 #[derive(Serialize)]
+struct HardwareView {
+    sensors: Vec<hardware::Sensor>,
+    gpus: Vec<hardware::GpuDevice>,
+    fans: Vec<tuning::Fan>,
+    peripherals: Vec<hardware::Peripheral>,
+    backlight_percent: Option<u32>,
+}
+
+#[tauri::command(async)]
+fn get_hardware(state: tauri::State<AppState>) -> HardwareView {
+    HardwareView {
+        sensors: hardware::sensors(),
+        gpus: hardware::gpus(&mut state.gpu_state.lock().unwrap()),
+        fans: tuning::list_fans(),
+        peripherals: hardware::peripherals(),
+        backlight_percent: system_control::get_brightness().map(|b| b.percent),
+    }
+}
+
+#[derive(Serialize)]
+struct DisplaysView {
+    monitors: Vec<hardware::MonitorInfo>,
+    config: hardware::DisplayConfig,
+    night_light_kelvin: Option<u32>,
+}
+
+#[tauri::command(async)]
+fn get_displays() -> DisplaysView {
+    DisplaysView {
+        monitors: hardware::monitors(),
+        config: hardware::load_config(),
+        night_light_kelvin: connectivity::night_light(),
+    }
+}
+
+#[tauri::command(async)]
+fn apply_monitors(state: tauri::State<AppState>, setups: Vec<hardware::MonitorSetup>) -> control_process::ActionResult {
+    logged(&state, "apply_monitors", hardware::apply_monitors(&setups))
+}
+
+#[tauri::command(async)]
+fn save_display_layout(name: String, auto: bool) -> control_process::ActionResult {
+    hardware::save_layout(&name, auto)
+}
+
+#[tauri::command(async)]
+fn delete_display_layout(name: String) -> control_process::ActionResult {
+    hardware::delete_layout(&name)
+}
+
+#[tauri::command(async)]
+fn apply_display_layout(state: tauri::State<AppState>, name: String) -> control_process::ActionResult {
+    logged(&state, "apply_display_layout", hardware::apply_layout(&name))
+}
+
+#[tauri::command(async)]
+fn set_night_schedule(night: hardware::NightLight) -> control_process::ActionResult {
+    let mut config = hardware::load_config();
+    config.night_light = night;
+    match hardware::save_config(&config) {
+        Ok(()) => sys_util::ok("Night light schedule saved"),
+        Err(e) => sys_util::err(e),
+    }
+}
+
+#[tauri::command(async)]
+fn get_external_displays() -> Vec<hardware::ExternalDisplay> {
+    hardware::external_displays()
+}
+
+#[tauri::command(async)]
+fn set_external_brightness(number: u32, percent: u32) -> control_process::ActionResult {
+    hardware::set_external_brightness(number, percent)
+}
+
+#[tauri::command(async)]
+fn explain_now(state: tauri::State<AppState>) -> extras::Explanation {
+    let snap = take_snapshot(&state);
+    let mut top_cpu: Vec<(String, f32)> = {
+        let sys = state.sys.lock().unwrap();
+        let mut by_name: std::collections::HashMap<String, f32> = std::collections::HashMap::new();
+        for p in sys.processes().values().filter(|p| p.thread_kind().is_none()) {
+            *by_name.entry(p.name().to_string_lossy().to_string()).or_default() += p.cpu_usage();
+        }
+        by_name.into_iter().collect()
+    };
+    top_cpu.sort_by(|a, b| b.1.total_cmp(&a.1));
+    let apps = memory_map::breakdown().apps;
+    let profile = tuning::cpu_power().power_profile.unwrap_or_default();
+    extras::explain(&extras::NowFacts {
+        cpu_percent: snap.cpu_usage_percent,
+        top_cpu,
+        top_memory: apps.iter().take(3).map(|a| (a.name.clone(), a.ram_bytes + a.swap_bytes)).collect(),
+        mem_available_percent: snap.available_memory_bytes as f32 / snap.total_memory_bytes.max(1) as f32 * 100.0,
+        swap_used_percent: if snap.total_swap_bytes > 0 {
+            snap.used_swap_bytes as f32 / snap.total_swap_bytes as f32 * 100.0
+        } else {
+            0.0
+        },
+        hottest_c: snap.temperatures.iter().map(|t| t.celsius).fold(0.0, f32::max),
+        mem_stall: snap.pressure.mem_some,
+        io_stall: snap.pressure.io_some,
+        cpu_stall: snap.pressure.cpu_some,
+        cores: snap.per_core_usage.len(),
+        on_battery: snap.battery.as_ref().is_some_and(|b| b.status == "Discharging"),
+        power_profile: profile,
+        fans_rpm: tuning::list_fans().iter().map(|f| f.rpm).collect(),
+    })
+}
+
+#[tauri::command(async)]
+fn list_timers() -> Vec<extras::TimerJob> {
+    extras::timers()
+}
+
+#[derive(Serialize)]
+struct PendingView {
+    watches: Vec<extras::Watch>,
+    countdown: Option<extras::Countdown>,
+}
+
+#[tauri::command(async)]
+fn get_pending(state: tauri::State<AppState>) -> PendingView {
+    let pending = state.pending.lock().unwrap();
+    PendingView { watches: pending.watches.clone(), countdown: pending.countdown.clone() }
+}
+
+#[tauri::command(async)]
+fn watch_process(state: tauri::State<AppState>, pid: u32) -> control_process::ActionResult {
+    let Some(name) = memory_map::app_name(&pid.to_string()) else {
+        return sys_util::err("That process has already finished");
+    };
+    let mut pending = state.pending.lock().unwrap();
+    if !pending.watches.iter().any(|w| w.pid == pid) {
+        pending.watches.push(extras::Watch { pid, name: name.clone(), since: chrono_now() });
+    }
+    sys_util::ok(format!("You'll get a notification when {name} (PID {pid}) finishes"))
+}
+
+#[tauri::command(async)]
+fn set_countdown(state: tauri::State<AppState>, action: Option<String>, minutes: u32) -> control_process::ActionResult {
+    let mut pending = state.pending.lock().unwrap();
+    match action {
+        None => {
+            pending.countdown = None;
+            sys_util::ok("Timer cancelled")
+        }
+        Some(action) if matches!(action.as_str(), "lock" | "suspend" | "poweroff" | "awake_off") && (1..=1440).contains(&minutes) => {
+            pending.countdown = Some(extras::Countdown { action: action.clone(), at: chrono_now() + minutes as i64 * 60 });
+            sys_util::ok(format!("Timer set for {minutes} minute(s)"))
+        }
+        Some(_) => sys_util::err("Pick an action and 1–1440 minutes"),
+    }
+}
+
+#[tauri::command(async)]
+fn get_pinned_tweaks(state: tauri::State<AppState>) -> Vec<tweaks::TweakState> {
+    let pinned = automation::load().pinned;
+    if pinned.is_empty() {
+        return Vec::new();
+    }
+    tweaks::list_some(&state.db, &pinned)
+}
+
+/// Handles `trace <command> …` whether this is the first copy or a second
+/// launch handing over. Returns true when the window should be shown.
+fn handle_cli(app: &tauri::AppHandle, args: &[String]) -> bool {
+    use tauri::Emitter;
+    let state = app.state::<AppState>();
+    let words: Vec<&str> = args.iter().skip(1).map(String::as_str).filter(|a| !a.starts_with("--")).collect();
+    match words.as_slice() {
+        ["preset", id] => {
+            if let Some(changes) = tweak_presets::changes_for(id, &tweaks::list(&state.db)) {
+                let results = tweaks::apply(&state.db, &changes, &format!("preset:{id}"), None);
+                log_tweak_results(&state, "command line", &results);
+                let failed = results.iter().filter(|r| !r.ok).count();
+                sys_util::notify("Trace", &format!("Preset {id}: {} applied, {failed} failed", results.len() - failed), false);
+            } else {
+                sys_util::notify("Trace", &format!("No preset called {id}"), false);
+            }
+            false
+        }
+        [action @ ("freeze" | "resume" | "quit" | "restart"), name] => {
+            let action = if *action == "quit" { "kill" } else { action };
+            let r = memory_map::app_action(name, action);
+            log_action(&state, &format!("app_{action}:{name} (command line)"), r.ok, &r.message);
+            sys_util::notify("Trace", &r.message, false);
+            false
+        }
+        ["page", page] => {
+            app.emit("navigate", serde_json::json!({ "page": page })).ok();
+            true
+        }
+        ["panic"] => {
+            app.emit("navigate", serde_json::json!({ "page": "memory" })).ok();
+            true
+        }
+        _ => !args.iter().any(|a| a == "--hidden"),
+    }
+}
+
+#[derive(Serialize)]
 struct AppInfo {
     version: &'static str,
     /// Whether a tray icon could be created on this desktop.
@@ -1912,6 +2122,20 @@ fn background_tick(state: &AppState, snap: &Snapshot, tick: u64) {
         logbook::ingest_crashes(&state.db, tick == 0);
         logbook::ingest_power_events(&state.db, tick == 0);
         logbook::ingest_packages(&state.db);
+        extras::ingest_trouble(&state.db);
+    }
+    if let Some(note) = hardware::tick(&mut state.display_state.lock().unwrap()) {
+        log_action(state, "display_layout", true, &note);
+    }
+    let due_action = extras::tick_pending(&mut state.pending.lock().unwrap(), now);
+    if let Some(action) = due_action {
+        let r = if action == "awake_off" {
+            tweaks::release_keep_awake();
+            sys_util::ok("Keep awake switched off by the timer")
+        } else {
+            desktop::session_action(&action)
+        };
+        log_action(state, &format!("timer_{action}"), r.ok, &r.message);
     }
     logbook::record_battery(&state.db, now, TICK_SECS as i64, &mut state.battery_prev.lock().unwrap());
     logbook::record_network(&state.db, now, &mut state.net_totals.lock().unwrap());
@@ -1948,7 +2172,7 @@ fn background_tick(state: &AppState, snap: &Snapshot, tick: u64) {
         for name in due {
             match profiles.iter().find(|p| p.name == name) {
                 Some(profile) => {
-                    let outcomes = tauri::async_runtime::block_on(run_profile(state, profile, false));
+                    let outcomes = tauri::async_runtime::block_on(run_profile(state, profile, false, true));
                     let failed = outcomes.iter().filter(|o| !o.ok).count();
                     sys_util::notify(
                         &format!("Trace ran profile “{name}”"),
@@ -1978,7 +2202,7 @@ pub fn run() {
         // Must be registered first: a second launch hands over to the
         // running copy (and brings its window back) instead of starting again.
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            if !args.iter().any(|a| a == "--hidden") {
+            if handle_cli(app, &args) {
                 show_main_window(app);
             }
         }))
@@ -2007,6 +2231,10 @@ pub fn run() {
             slow_health: Mutex::new(SlowHealth::default()),
             battery_prev: Mutex::new(logbook::BatteryPrev::default()),
             tray: Mutex::new(None),
+            gpu_state: Mutex::new(hardware::GpuState::default()),
+            display_state: Mutex::new(hardware::DisplayState::default()),
+            pending: Mutex::new(extras::Pending::default()),
+            sleepers: Mutex::new(extras::SleeperState::default()),
             net_totals: Mutex::new(std::collections::HashMap::new()),
         })
         .setup(move |app| {
@@ -2015,9 +2243,30 @@ pub fn run() {
                 Ok(handles) => *app.state::<AppState>().tray.lock().unwrap() = Some(handles),
                 Err(e) => eprintln!("trace: no tray icon on this desktop ({e})"),
             }
-            if !start_hidden {
+            let args: Vec<String> = std::env::args().collect();
+            if handle_cli(app.handle(), &args) && !start_hidden {
                 show_main_window(app.handle());
             }
+            // Apps listed to sleep when unused are checked every second, so
+            // one wakes the moment you click back into it.
+            extras::recover_frozen();
+            let sleeper_handle = app.handle().clone();
+            std::thread::spawn(move || loop {
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                let sleepers = automation::load().sleepers;
+                let state = sleeper_handle.state::<AppState>();
+                let mut guard = state.sleepers.lock().unwrap();
+                if sleepers.is_empty() && guard.frozen.is_empty() {
+                    drop(guard);
+                    // Nothing to do: check for a changed list only occasionally.
+                    std::thread::sleep(std::time::Duration::from_secs(9));
+                    continue;
+                }
+                let focused = logbook::focused_app();
+                for line in guard.step(&sleepers, focused.as_deref(), chrono_now()) {
+                    log_action(&state, "sleep_unused_apps", true, &line);
+                }
+            });
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 {
@@ -2107,6 +2356,21 @@ pub fn run() {
             list_namespaces,
             scan_folder_sizes,
             get_memory_breakdown,
+            get_hardware,
+            get_displays,
+            apply_monitors,
+            save_display_layout,
+            delete_display_layout,
+            apply_display_layout,
+            set_night_schedule,
+            get_external_displays,
+            set_external_brightness,
+            explain_now,
+            list_timers,
+            get_pending,
+            watch_process,
+            set_countdown,
+            get_pinned_tweaks,
             connect_best_vpn_gate,
             get_public_address,
             get_vpn_kill_switch,
@@ -2191,9 +2455,11 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
-        .run(|_app, event| {
+        .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
                 tweaks::release_keep_awake();
+                // Never leave an app frozen behind.
+                app.state::<AppState>().sleepers.lock().unwrap().wake_all();
             }
         });
 }
@@ -2217,6 +2483,10 @@ mod tests {
             slow_health: Mutex::new(SlowHealth::default()),
             battery_prev: Mutex::new(logbook::BatteryPrev::default()),
             tray: Mutex::new(None),
+            gpu_state: Mutex::new(hardware::GpuState::default()),
+            display_state: Mutex::new(hardware::DisplayState::default()),
+            pending: Mutex::new(extras::Pending::default()),
+            sleepers: Mutex::new(extras::SleeperState::default()),
             net_totals: Mutex::new(std::collections::HashMap::new()),
         };
         let snap = take_snapshot(&state);
@@ -2287,6 +2557,26 @@ mod tests {
         dump("get_automation", json(&automation::Config::default()));
         dump("list_profiles", json(&profiles::list_profiles()));
         dump("list_vpns", json(&vpn::list()));
+        hardware::gpus(&mut state.gpu_state.lock().unwrap());
+        dump(
+            "get_hardware",
+            serde_json::json!({
+                "sensors": hardware::sensors(),
+                "gpus": hardware::gpus(&mut state.gpu_state.lock().unwrap()),
+                "fans": tuning::list_fans(),
+                "peripherals": hardware::peripherals(),
+                "backlight_percent": system_control::get_brightness().map(|b| b.percent),
+            }),
+        );
+        dump(
+            "get_displays",
+            serde_json::json!({
+                "monitors": hardware::monitors(),
+                "config": hardware::load_config(),
+                "night_light_kelvin": connectivity::night_light(),
+            }),
+        );
+        dump("list_timers", json(&extras::timers()));
         let all = tweaks::list(&state.db);
         dump(
             "get_tweaks",

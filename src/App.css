@@ -2252,3 +2252,110 @@ kbd {
 .diagnose-hint + .control-actions {
   margin-top: 10px;
 }
+
+/* ---- Hardware ---- */
+
+.sensor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(380px, 100%), 1fr));
+  gap: 6px 28px;
+}
+
+.sensor-chip .sub-heading {
+  margin-top: 8px;
+}
+
+.sensor-row {
+  display: grid;
+  grid-template-columns: minmax(70px, 1fr) 90px 84px minmax(0, 110px);
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  padding: 3px 0;
+}
+
+.sensor-value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.sensor-range {
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gpu-card + .gpu-card {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #1e212b;
+}
+
+.monitor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(440px, 100%), 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.monitor-card {
+  background: #171a23;
+  border: 1px solid #1e212b;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.monitor-card .disk-info {
+  margin-bottom: 10px;
+}
+
+.pin-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #5a6072;
+  font-size: 14px;
+  padding: 0 2px;
+}
+
+.pin-btn.pinned,
+.pin-btn:hover {
+  color: #fab219;
+}
+
+.explain {
+  border-left: 3px solid #3987e5;
+  padding: 2px 0 2px 12px;
+  margin: 10px 0 0;
+}
+
+.explain strong {
+  display: block;
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+
+.explain li {
+  font-size: 12px;
+  color: #b3b8c4;
+  margin: 3px 0;
+}
+
+.explain ul {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.pinned-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr));
+  gap: 8px 20px;
+}
+
+.pinned {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}

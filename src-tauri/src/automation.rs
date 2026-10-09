@@ -25,6 +25,50 @@ pub enum Trigger {
     /// Local time; `days` uses 0 = Sunday and empty means every day.
     Time { hour: u32, minute: u32, #[serde(default)] days: Vec<u32> },
     AppLaunch { app: String },
+    /// The charger was unplugged / plugged in.
+    OnBattery,
+    OnCharger,
+    /// The battery fell to this level while discharging.
+    BatteryBelow { percent: u32 },
+    /// A Wi-Fi network with this name was joined ("" = any network not listed elsewhere).
+    WifiJoined { ssid: String },
+    /// An external monitor was connected / the last one was removed.
+    MonitorConnected,
+    MonitorDisconnected,
+}
+
+/// What the triggers look at, sampled once per tick.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Situation {
+    pub on_battery: bool,
+    pub battery_percent: u32,
+    pub wifi: String,
+    pub monitors: usize,
+}
+
+impl Situation {
+    pub fn read() -> Self {
+        let battery = crate::health::battery_health().into_iter().next();
+        Situation {
+            on_battery: battery.as_ref().is_some_and(|b| b.status == "Discharging"),
+            battery_percent: battery.map(|b| b.percent.round() as u32).unwrap_or(100),
+            wifi: crate::sys_util::run_lossy(
+                std::process::Command::new("nmcli").args(["-t", "-f", "active,ssid", "dev", "wifi"]),
+            )
+            .lines()
+            .find_map(|l| l.strip_prefix("yes:").map(str::to_string))
+            .unwrap_or_default(),
+            monitors: std::fs::read_dir("/sys/class/drm")
+                .map(|d| {
+                    d.flatten()
+                        .filter(|e| {
+                            std::fs::read_to_string(e.path().join("status")).is_ok_and(|s| s.trim() == "connected")
+                        })
+                        .count()
+                })
+                .unwrap_or(1),
+        }
+    }
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
@@ -47,6 +91,12 @@ pub struct Config {
     pub rules: Vec<Rule>,
     #[serde(default)]
     pub schedules: Vec<Schedule>,
+    /// Settings shown as one-click switches on the Overview page.
+    #[serde(default)]
+    pub pinned: Vec<String>,
+    /// Apps that are frozen after going unused for a while.
+    #[serde(default)]
+    pub sleepers: Vec<crate::extras::Sleeper>,
 }
 
 fn yes() -> bool {
@@ -60,6 +110,8 @@ impl Default for Config {
             close_to_tray: true,
             rules: Vec::new(),
             schedules: Vec::new(),
+            pinned: Vec::new(),
+            sleepers: Vec::new(),
         }
     }
 }
@@ -87,6 +139,7 @@ pub struct State {
     last_fired: HashMap<String, i64>,
     schedule_last_day: HashMap<String, u32>,
     running_apps: Option<HashSet<String>>,
+    situation: Option<Situation>,
 }
 
 const RULE_COOLDOWN_SECS: i64 = 600;
@@ -170,6 +223,13 @@ pub fn due_schedules(config: &Config, state: &mut State) -> Vec<String> {
         return Vec::new();
     }
     let now = local_time();
+    // Situation triggers compare this tick with the last one, so each
+    // fires once on the change rather than for as long as it stays true.
+    let needs_situation = active
+        .iter()
+        .any(|s| !matches!(s.trigger, Trigger::Time { .. } | Trigger::AppLaunch { .. }));
+    let situation = needs_situation.then(Situation::read);
+    let before = state.situation.clone();
     let watches_launches = active.iter().any(|s| matches!(s.trigger, Trigger::AppLaunch { .. }));
     let running = watches_launches.then(running_app_names);
 
@@ -188,13 +248,32 @@ pub fn due_schedules(config: &Config, state: &mut State) -> Vec<String> {
                 (Some(current), Some(previous)) => current.contains(app) && !previous.contains(app),
                 _ => false,
             },
+            other => match (&situation, &before) {
+                (Some(now), Some(was)) => situation_fired(other, was, now),
+                _ => false,
+            },
         };
         if fire {
             due.push(schedule.profile.clone());
         }
     }
     state.running_apps = running;
+    state.situation = situation;
     due
+}
+
+fn situation_fired(trigger: &Trigger, was: &Situation, now: &Situation) -> bool {
+    match trigger {
+        Trigger::OnBattery => now.on_battery && !was.on_battery,
+        Trigger::OnCharger => !now.on_battery && was.on_battery,
+        Trigger::BatteryBelow { percent } => {
+            now.on_battery && now.battery_percent <= *percent && was.battery_percent > *percent
+        }
+        Trigger::WifiJoined { ssid } => !now.wifi.is_empty() && now.wifi != was.wifi && (ssid.is_empty() || *ssid == now.wifi),
+        Trigger::MonitorConnected => now.monitors > was.monitors,
+        Trigger::MonitorDisconnected => now.monitors < was.monitors,
+        Trigger::Time { .. } | Trigger::AppLaunch { .. } => false,
+    }
 }
 
 #[cfg(test)]
@@ -217,6 +296,8 @@ mod tests {
 
     fn config(include_swap: bool) -> Config {
         Config {
+            pinned: Vec::new(),
+            sleepers: Vec::new(),
             alerts_enabled: true,
             close_to_tray: true,
             rules: vec![Rule {
@@ -241,6 +322,29 @@ mod tests {
         assert_eq!(evaluate_rules(&config(true), &under, &mut state, 0).len(), 1);
         assert!(evaluate_rules(&config(true), &under, &mut state, 60).is_empty());
         assert_eq!(evaluate_rules(&config(true), &under, &mut state, RULE_COOLDOWN_SECS + 1).len(), 1);
+    }
+
+    #[test]
+    fn situation_triggers_fire_on_the_change_only() {
+        let plugged = Situation { on_battery: false, battery_percent: 80, wifi: "home".to_string(), monitors: 1 };
+        let unplugged = Situation { on_battery: true, ..plugged.clone() };
+        assert!(situation_fired(&Trigger::OnBattery, &plugged, &unplugged));
+        assert!(!situation_fired(&Trigger::OnBattery, &unplugged, &unplugged));
+        assert!(situation_fired(&Trigger::OnCharger, &unplugged, &plugged));
+
+        let low = Situation { battery_percent: 19, ..unplugged.clone() };
+        let at_21 = Situation { battery_percent: 21, ..unplugged.clone() };
+        assert!(situation_fired(&Trigger::BatteryBelow { percent: 20 }, &at_21, &low));
+        assert!(!situation_fired(&Trigger::BatteryBelow { percent: 20 }, &low, &low));
+
+        let cafe = Situation { wifi: "cafe".to_string(), ..plugged.clone() };
+        assert!(situation_fired(&Trigger::WifiJoined { ssid: "cafe".to_string() }, &plugged, &cafe));
+        assert!(situation_fired(&Trigger::WifiJoined { ssid: String::new() }, &plugged, &cafe));
+        assert!(!situation_fired(&Trigger::WifiJoined { ssid: "home".to_string() }, &plugged, &cafe));
+
+        let docked = Situation { monitors: 2, ..plugged.clone() };
+        assert!(situation_fired(&Trigger::MonitorConnected, &plugged, &docked));
+        assert!(situation_fired(&Trigger::MonitorDisconnected, &docked, &plugged));
     }
 
     #[test]

@@ -9,6 +9,9 @@ import Activity from "./Activity";
 import Health, { HealthScore } from "./Health";
 import Logs from "./Logs";
 import Tweaks from "./Tweaks";
+import Hardware from "./Hardware";
+import { ExplainNow, PinnedSwitches } from "./Quick";
+import { listen } from "@tauri-apps/api/event";
 import SearchPalette from "./SearchPalette";
 import { NavContext, NavTarget } from "./nav";
 import { Tile } from "./ui";
@@ -85,6 +88,7 @@ const PAGES = [
   { key: "live", label: "Overview", hint: "Live state of the machine" },
   { key: "memory", label: "Memory", hint: "Where RAM and swap are going" },
   { key: "activity", label: "Activity", hint: "Disk, network and wakeups by app" },
+  { key: "hardware", label: "Hardware", hint: "Sensors, fans, graphics, displays and devices" },
   { key: "health", label: "Health", hint: "Score, restarts, errors, battery, drives" },
   { key: "history", label: "History", hint: "Charts over time and disk usage" },
   { key: "logs", label: "Logs", hint: "Daily, weekly, monthly and yearly record" },
@@ -152,6 +156,14 @@ function App() {
     []
   );
   const setTab = (page: PageKey) => go({ page });
+
+  // `trace page <name>` and `trace panic` from a terminal or a key binding.
+  useEffect(() => {
+    const stop = listen<{ page: string }>("navigate", (event) => go({ page: event.payload.page }));
+    return () => {
+      stop.then((off) => off());
+    };
+  }, [go]);
 
   // Ctrl+K (or /) opens search from anywhere.
   useEffect(() => {
@@ -273,6 +285,7 @@ function App() {
       {tab === "activity" && <Activity />}
       {tab === "logs" && <Logs />}
       {tab === "tweaks" && <Tweaks />}
+      {tab === "hardware" && <Hardware />}
       {tab === "health" && <Health />}
       {tab === "memory" && <MemoryMap />}
       {tab === "history" && <History />}
@@ -333,6 +346,7 @@ function App() {
           />
         )}
       </div>
+      <PinnedSwitches />
       <HealthScore compact />
 
       <section className="panel">
@@ -361,6 +375,7 @@ function App() {
             {snapshot.pressure.io_some.toFixed(0)}%
           </span>
         </div>
+        <ExplainNow />
       </section>
 
       <section className="panel">

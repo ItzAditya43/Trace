@@ -13,7 +13,21 @@ interface Rule {
 
 type Trigger =
   | { type: "Time"; hour: number; minute: number; days: number[] }
-  | { type: "AppLaunch"; app: string };
+  | { type: "AppLaunch"; app: string }
+  | { type: "OnBattery" | "OnCharger" | "MonitorConnected" | "MonitorDisconnected" }
+  | { type: "BatteryBelow"; percent: number }
+  | { type: "WifiJoined"; ssid: string };
+
+const TRIGGER_KINDS: { key: string; label: string }[] = [
+  { key: "Time", label: "At a time" },
+  { key: "AppLaunch", label: "When an app starts" },
+  { key: "OnBattery", label: "When unplugged" },
+  { key: "OnCharger", label: "When plugged in" },
+  { key: "BatteryBelow", label: "When the battery falls to…" },
+  { key: "WifiJoined", label: "When a Wi-Fi network is joined" },
+  { key: "MonitorConnected", label: "When a monitor is connected" },
+  { key: "MonitorDisconnected", label: "When a monitor is removed" },
+];
 
 interface Schedule {
   id: string;
@@ -25,6 +39,8 @@ interface Schedule {
 interface Config {
   alerts_enabled: boolean;
   close_to_tray: boolean;
+  pinned: string[];
+  sleepers: { app: string; minutes: number }[];
   rules: Rule[];
   schedules: Schedule[];
 }
@@ -67,6 +83,13 @@ function newId(): string {
 
 function describeTrigger(t: Trigger): string {
   if (t.type === "AppLaunch") return `when ${t.app} starts`;
+  if (t.type === "OnBattery") return "when the charger is unplugged";
+  if (t.type === "OnCharger") return "when the charger is plugged in";
+  if (t.type === "BatteryBelow") return `when the battery falls to ${t.percent}%`;
+  if (t.type === "WifiJoined") return t.ssid ? `when you join “${t.ssid}”` : "when you join any Wi-Fi network";
+  if (t.type === "MonitorConnected") return "when a monitor is connected";
+  if (t.type === "MonitorDisconnected") return "when a monitor is removed";
+  if (t.type !== "Time") return "";
   const time = `${String(t.hour).padStart(2, "0")}:${String(t.minute).padStart(2, "0")}`;
   const days = t.days.length === 0 || t.days.length === 7
     ? "every day"
@@ -219,6 +242,67 @@ function Rules({
   );
 }
 
+function Sleepers({ config, save, apps }: { config: Config; save: (c: Config) => void; apps: string[] }) {
+  const [app, setApp] = useState("");
+  const [minutes, setMinutes] = useState("10");
+  return (
+    <section className="panel">
+      <h2>Sleep Apps You Aren't Using</h2>
+      {config.sleepers.length === 0 && (
+        <p className="diagnose-hint">
+          None yet. A listed app is frozen once its window has gone unused for a while, and wakes the
+          moment you click back into it.
+        </p>
+      )}
+      {config.sleepers.map((s) => (
+        <div key={s.app} className="control-row">
+          <label>
+            <strong>{s.app}</strong> after {s.minutes} minutes without focus
+          </label>
+          <button
+            className="ctl-btn ctl-danger"
+            onClick={() => save({ ...config, sleepers: config.sleepers.filter((x) => x.app !== s.app) })}
+          >
+            Remove
+          </button>
+        </div>
+      ))}
+      <div className="control-row">
+        <label>Put this app to sleep</label>
+        <AppInput value={app} onChange={setApp} apps={apps} />
+        <input
+          className="port-input number-box"
+          value={minutes}
+          aria-label="Minutes unused"
+          onChange={(e) => setMinutes(e.target.value.replace(/\D/g, ""))}
+        />
+        <button
+          className="ctl-btn ctl-primary"
+          disabled={!app.trim() || !(parseInt(minutes, 10) > 0)}
+          onClick={() => {
+            save({
+              ...config,
+              sleepers: [
+                ...config.sleepers.filter((x) => x.app !== app.trim()),
+                { app: app.trim(), minutes: parseInt(minutes, 10) },
+              ],
+            });
+            setApp("");
+          }}
+        >
+          Add
+        </button>
+      </div>
+      <p className="diagnose-hint">
+        A sleeping app uses no CPU and its memory can be pushed out to swap, but it also stops
+        everything it was doing: music, downloads, calls and notifications. Don't list a chat app
+        you expect messages from. Everything is woken when Trace quits, and after a crash the next
+        start wakes anything left asleep.
+      </p>
+    </section>
+  );
+}
+
 function Schedules({
   config,
   save,
@@ -231,7 +315,9 @@ function Schedules({
   profiles: Profile[];
 }) {
   const [profile, setProfile] = useState("");
-  const [kind, setKind] = useState("at a time");
+  const [kind, setKind] = useState("Time");
+  const [percent, setPercent] = useState("20");
+  const [ssid, setSsid] = useState("");
   const [time, setTime] = useState("09:00");
   const [days, setDays] = useState<number[]>([]);
   const [app, setApp] = useState("");
@@ -240,9 +326,15 @@ function Schedules({
   function add() {
     const [hour, minute] = time.split(":").map((n) => parseInt(n, 10));
     const trigger: Trigger =
-      kind === "at a time"
+      kind === "Time"
         ? { type: "Time", hour, minute, days }
-        : { type: "AppLaunch", app: app.trim() };
+        : kind === "AppLaunch"
+        ? { type: "AppLaunch", app: app.trim() }
+        : kind === "BatteryBelow"
+        ? { type: "BatteryBelow", percent: Math.min(95, Math.max(3, parseInt(percent, 10) || 20)) }
+        : kind === "WifiJoined"
+        ? { type: "WifiJoined", ssid: ssid.trim() }
+        : ({ type: kind } as Trigger);
     save({
       ...config,
       schedules: [
@@ -303,9 +395,27 @@ function Schedules({
             </option>
           ))}
         </select>
-        <Segmented options={["at a time", "when an app starts"]} value={kind} onChange={setKind} />
+        <select className="port-input" value={kind} onChange={(e) => setKind(e.target.value)} aria-label="When">
+          {TRIGGER_KINDS.map((k) => (
+            <option key={k.key} value={k.key}>
+              {k.label}
+            </option>
+          ))}
+        </select>
       </div>
-      {kind === "at a time" ? (
+      {kind === "BatteryBelow" && (
+        <div className="control-row">
+          <label>Battery level (%)</label>
+          <input className="port-input number-box" value={percent} onChange={(e) => setPercent(e.target.value.replace(/\D/g, ""))} />
+        </div>
+      )}
+      {kind === "WifiJoined" && (
+        <div className="control-row">
+          <label>Network name (leave empty for any network)</label>
+          <input className="port-input" value={ssid} onChange={(e) => setSsid(e.target.value)} placeholder="Cafe Wi-Fi" />
+        </div>
+      )}
+      {kind === "Time" ? (
         <div className="control-row">
           <label>Time and days (none selected = every day)</label>
           <input
@@ -328,24 +438,26 @@ function Schedules({
             ))}
           </div>
         </div>
-      ) : (
+      ) : kind === "AppLaunch" ? (
         <div className="control-row">
           <label>When this app starts</label>
           <AppInput value={app} onChange={setApp} apps={apps} />
         </div>
-      )}
+      ) : null}
       <div className="control-actions">
         <button
           className="ctl-btn ctl-primary"
-          disabled={!chosen || (kind !== "at a time" && !app.trim())}
+          disabled={!chosen || (kind === "AppLaunch" && !app.trim())}
           onClick={add}
         >
           Add schedule
         </button>
       </div>
       <p className="diagnose-hint">
-        Schedules only run while Trace is open. Profiles with no actions do
-        nothing — build one below first.
+        These run while Trace is running. When Trace applies a profile by
+        itself it never asks for your password: any step that needs one is
+        skipped and listed in the action log. A falling-battery ladder is
+        three schedules: 30%, 20% and 10%, each applying a stricter profile.
       </p>
     </section>
   );
@@ -514,6 +626,7 @@ export default function Automation({ onProfilesChanged }: { onProfilesChanged: (
         </p>
       </section>
       <Rules config={config.data} save={save} apps={apps} />
+      <Sleepers config={config.data} save={save} apps={apps} />
       <Schedules
         config={config.data}
         save={save}

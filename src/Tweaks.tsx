@@ -172,7 +172,11 @@ function TweakRow({
   busy,
   onChange,
   onKeep,
+  pinned,
+  onPin,
 }: {
+  pinned: boolean;
+  onPin: (t: TweakState) => void;
   t: TweakState;
   pending: string | undefined;
   busy: boolean;
@@ -185,7 +189,17 @@ function TweakRow({
   return (
     <div className={"tweak" + (staged ? " tweak-staged" : "")} id={`tweak-${t.id}`}>
       <div className="tweak-head">
-        <span className="tweak-title">{t.title}</span>
+        <span className="tweak-title">
+          <button
+            className={pinned ? "pin-btn pinned" : "pin-btn"}
+            title={pinned ? "Remove from the Overview page" : "Pin as a one-click switch on the Overview page"}
+            aria-label={pinned ? `Unpin ${t.title}` : `Pin ${t.title}`}
+            onClick={() => onPin(t)}
+          >
+            {pinned ? "★" : "☆"}
+          </button>{" "}
+          {t.title}
+        </span>
         <span className="tweak-control">
           {t.kind === "toggle" && (
             <Switch
@@ -329,6 +343,15 @@ export default function Tweaks() {
   const [showExpert, setShowExpert] = useState(false);
   const [onlyChanged, setOnlyChanged] = useState(false);
   const [presetName, setPresetName] = useState("");
+  const automation = usePoll<{ pinned: string[] } & Record<string, unknown>>("get_automation");
+  const pinnedIds = automation.data?.pinned ?? [];
+
+  async function togglePin(t: TweakState) {
+    if (!automation.data) return;
+    const pinned = pinnedIds.includes(t.id) ? pinnedIds.filter((id) => id !== t.id) : [...pinnedIds, t.id];
+    await invoke("save_automation", { config: { ...automation.data, pinned } });
+    automation.reload();
+  }
 
   // Arriving from global search: show the setting that was searched for.
   useEffect(() => {
@@ -595,6 +618,8 @@ export default function Tweaks() {
                   busy={busy}
                   onChange={change}
                   onKeep={keep}
+                  pinned={pinnedIds.includes(t.id)}
+                  onPin={togglePin}
                 />
               ))}
             </div>

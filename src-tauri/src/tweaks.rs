@@ -1186,6 +1186,12 @@ pub fn list(db: &Db) -> Vec<TweakState> {
     states
 }
 
+/// Current state of just the named settings (for pinned switches).
+pub fn list_some(db: &Db, ids: &[String]) -> Vec<TweakState> {
+    let all = list(db);
+    ids.iter().filter_map(|id| all.iter().find(|t| t.id == *id).cloned()).collect()
+}
+
 pub fn recent_changes(db: &Db, limit: i64) -> Vec<ChangeRow> {
     let conn = db.conn.lock().unwrap();
     let Ok(mut stmt) = conn.prepare(
@@ -1309,6 +1315,13 @@ fn execute_user(plan: &Plan) -> Result<(), String> {
 /// Applies a batch of changes. `keep` additionally marks each changed
 /// setting to be kept (true) or no longer kept (false) across reboots.
 pub fn apply(db: &Db, changes: &[Change], source: &str, keep: Option<bool>) -> Vec<ChangeResult> {
+    apply_with(db, changes, source, keep, true)
+}
+
+/// As `apply`, but with `allow_root` false nothing that needs a password is
+/// attempted — used when Trace acts by itself (schedules, triggers), where
+/// a password prompt appearing out of nowhere would be wrong.
+pub fn apply_with(db: &Db, changes: &[Change], source: &str, keep: Option<bool>, allow_root: bool) -> Vec<ChangeResult> {
     let ctx = ReadCtx::new();
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1362,6 +1375,9 @@ pub fn apply(db: &Db, changes: &[Change], source: &str, keep: Option<bool>) -> V
         let index = items.len();
         let mut item = Item { tweak, old: reading.value.clone(), new: value.clone(), outcome: None };
         match planned {
+            Plan::Root(_) | Plan::DropIn(..) if !allow_root => {
+                item.outcome = Some(Err("Needs your password, so it was skipped in this automatic run".to_string()));
+            }
             Plan::Root(fragment) => root.push((index, fragment)),
             Plan::DropIn(d, raw) => {
                 let entry = dropins.entry(d.file).or_insert_with(|| {
