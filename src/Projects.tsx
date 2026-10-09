@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { homeDir } from "@tauri-apps/api/path";
 import { ActionResult, Tile, bytesToHuman } from "./ui";
 import { ProjectJunk } from "./More";
+import { WorkMode } from "./Batch5";
 
 interface ProjectInfo {
   name: string;
@@ -123,6 +124,7 @@ function ProjectCard({ p }: { p: ProjectInfo }) {
         </button>
       </div>
       <ProjectJunk project={p.path} />
+      <WorkMode project={p.path} />
       {message && <p className="status-fail">✗ {message.message}</p>}
     </section>
   );

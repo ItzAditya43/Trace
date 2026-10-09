@@ -5,7 +5,10 @@ import AppSettings from "./AppSettings";
 import { ScheduledJobs, TimersControl } from "./Quick";
 import { ConnectionDoctor, DataBudgets, ListeningPorts } from "./More";
 import { PrivacyCleaner, RunRestricted, SavedWifiCard } from "./Batch3";
+import { Connections, SpeedHistory, WhatIs, WifiChannels } from "./Batch4";
+import { AppMixer, Backups, FileFinder, GameModeCard, GroupBudgets, Maintenance, UpdateAssistant } from "./Batch5";
 import { invoke } from "@tauri-apps/api/core";
+import { usePoll } from "./ui";
 import Automation from "./Automation";
 import Packages from "./Packages";
 import { CpuPowerControl, FanControl, MemoryTuningControl } from "./ControlTuning";
@@ -57,7 +60,8 @@ type ProfileAction =
   | { type: "QuitApp"; app: string }
   | { type: "SetPowerProfile"; profile: string }
   | { type: "ApplyPreset"; preset: string }
-  | { type: "RunCommand"; command: string };
+  | { type: "RunCommand"; command: string }
+  | { type: "SetAudioOutput"; output: string };
 
 interface Profile {
   name: string;
@@ -1203,6 +1207,8 @@ function describeAction(a: ProfileAction): string {
       return `Apply the “${a.preset}” settings preset`;
     case "RunCommand":
       return `Run: ${a.command}`;
+    case "SetAudioOutput":
+      return `Send sound to ${a.output}`;
   }
 }
 
@@ -1251,6 +1257,19 @@ const SECTIONS = [
 
 type SectionKey = (typeof SECTIONS)[number]["key"];
 
+function useRunningApps(): string[] {
+  const memory = usePoll<{ apps: { name: string }[] }>("get_memory_breakdown", undefined, 30000);
+  return (memory.data?.apps ?? []).slice(0, 40).map((a) => a.name);
+}
+
+function WhatIsWithApps() {
+  return <WhatIs apps={useRunningApps()} />;
+}
+
+function GroupBudgetsWithApps() {
+  return <GroupBudgets apps={useRunningApps()} />;
+}
+
 export default function Control() {
   const { target } = useContext(NavContext);
   const [section, setSection] = useState<SectionKey>("apps");
@@ -1283,6 +1302,7 @@ export default function Control() {
           <ProcessControl />
           <ListeningPorts />
           <RunRestricted />
+          <WhatIsWithApps />
           <WindowControl />
           <NamespaceControl />
         </>
@@ -1303,7 +1323,10 @@ export default function Control() {
           <VpnControl />
           <ConnectionDoctor />
           <DataBudgets />
+          <SpeedHistory />
           <SavedWifiCard />
+          <WifiChannels />
+          <Connections />
           <WirelessControl />
           <FirewallControl />
           <NetworkControl />
@@ -1313,6 +1336,7 @@ export default function Control() {
         <>
           <DisplayControl />
           <AudioControl />
+          <AppMixer />
           <UsbControl />
           <ClipboardHistory />
         </>
@@ -1330,6 +1354,8 @@ export default function Control() {
         <>
           <ProfilesControl key={profilesVersion} />
           <Automation onProfilesChanged={() => setProfilesVersion((v) => v + 1)} />
+          <GameModeCard />
+          <GroupBudgetsWithApps />
           <AppSettings />
           <ActionLog />
         </>
@@ -1337,8 +1363,12 @@ export default function Control() {
       {section === "packages" && (
         <>
           <Packages />
+          <UpdateAssistant />
+          <Maintenance />
           <CleanupControl />
           <PrivacyCleaner />
+          <FileFinder />
+          <Backups />
         </>
       )}
     </div>

@@ -80,6 +80,15 @@ export default function AppSettings() {
       )}
       <StatusLine result={result} />
 
+      <div className="control-row">
+        <label>
+          Mini monitor
+          <span className="mem-muted"> — a small always-on-top window; also in the tray menu, or run <code>trace mini</code></span>
+        </label>
+        <button className="ctl-btn" onClick={() => invoke("open_mini")}>
+          Show / hide
+        </button>
+      </div>
       <SettingsTransfer />
 
       <h3 className="sub-heading">Alerts Trace has sent</h3>

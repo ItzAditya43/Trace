@@ -1362,7 +1362,7 @@ pub fn boot_service_state(db: &Db) -> &'static str {
 
 // ---- applying ----
 
-#[derive(Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Change {
     pub id: String,
     pub value: String,

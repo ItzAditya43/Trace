@@ -2,6 +2,8 @@ mod activity;
 mod automation;
 mod autostart;
 mod batch3;
+mod batch4;
+mod batch5;
 mod connectivity;
 mod control_process;
 mod db;
@@ -775,6 +777,7 @@ async fn execute_action(state: &AppState, action: &profiles::Action, unattended:
         ResumeApp { app } => as_result(memory_map::app_action(app, "resume")),
         QuitApp { app } => as_result(memory_map::app_action(app, "kill")),
         SetPowerProfile { profile } => as_result(tuning::set_power_profile(profile)),
+        SetAudioOutput { output } => as_result(desktop::set_default_audio("sink", output)),
         RunCommand { command } => {
             // Your own command, run as you — the hook for anything Trace doesn't do itself.
             use std::os::unix::process::CommandExt;
@@ -1007,6 +1010,10 @@ async fn undo_profile(
 
 #[tauri::command]
 async fn check_for_update() -> Result<Option<update_check::UpdateInfo>, String> {
+    // Not on a connection marked as limited data.
+    if sys_util::run_lossy(std::process::Command::new("nmcli").args(["-t", "-f", "METERED", "general", "status"])).starts_with("yes") {
+        return Ok(None);
+    }
     update_check::check_for_update("ItzAditya43/Trace").await
 }
 
@@ -1661,6 +1668,248 @@ fn get_data_usage(state: tauri::State<AppState>) -> Vec<more::DataUsage> {
 }
 
 #[tauri::command(async)]
+fn open_mini(app: tauri::AppHandle) {
+    let handle = app.clone();
+    app.run_on_main_thread(move || open_mini_window(&handle, false)).ok();
+}
+
+#[tauri::command(async)]
+fn get_power_report(state: tauri::State<AppState>) -> batch4::PowerReport {
+    batch4::power_report(&state.db)
+}
+
+#[tauri::command(async)]
+fn get_folder_growth(state: tauri::State<AppState>, against: Option<i64>) -> batch4::GrowthReport {
+    batch4::folder_growth(&state.db, against)
+}
+
+#[tauri::command(async)]
+fn snapshot_folders() -> control_process::ActionResult {
+    if batch4::snapshot_folders(chrono_now()) {
+        sys_util::ok("Measuring folders in the background — this takes a minute or two")
+    } else {
+        sys_util::err("A measurement is already running")
+    }
+}
+
+#[tauri::command(async)]
+fn get_measurements() -> Vec<batch4::Measurement> {
+    batch4::measurements()
+}
+
+#[tauri::command(async)]
+fn run_measurement(label: String, seconds: u64) -> Vec<batch4::Measurement> {
+    batch4::measure(&label, seconds, chrono_now())
+}
+
+#[tauri::command(async)]
+fn clear_measurements() {
+    batch4::clear_measurements()
+}
+
+#[tauri::command(async)]
+fn get_access_log() -> Vec<batch4::AccessEvent> {
+    batch4::access_log()
+}
+
+#[tauri::command(async)]
+fn get_connections(state: tauri::State<AppState>) -> Vec<batch4::AppPeers> {
+    batch4::connections(&state.db, chrono_now())
+}
+
+#[tauri::command(async)]
+fn lookup_host(ip: String) -> String {
+    batch4::host_name(&ip)
+}
+
+#[tauri::command(async)]
+fn what_is(name: String) -> batch4::WhatIs {
+    batch4::what_is(&name)
+}
+
+#[tauri::command(async)]
+fn get_speed_history(state: tauri::State<AppState>) -> Vec<batch4::SpeedTest> {
+    batch4::speed_history(&state.db)
+}
+
+#[tauri::command(async)]
+fn run_speed_test(state: tauri::State<AppState>) -> Result<Vec<batch4::SpeedTest>, String> {
+    batch4::speed_test(&state.db, chrono_now())
+}
+
+#[tauri::command(async)]
+fn get_wifi_air(rescan: bool) -> batch4::WifiAir {
+    batch4::wifi_air(rescan)
+}
+
+#[tauri::command(async)]
+fn get_wifi_qr(state: tauri::State<AppState>, uuid: String) -> Result<String, String> {
+    log_action(&state, "wifi_share_qr", true, "shown on request");
+    batch4::wifi_qr(&uuid)
+}
+
+#[tauri::command(async)]
+fn get_drive_wear(state: tauri::State<AppState>) -> Vec<batch4::WearPoint> {
+    batch4::wear_history(&state.db)
+}
+
+#[tauri::command(async)]
+fn get_maintenance() -> batch5::MaintenanceStatus {
+    batch5::maintenance_status()
+}
+
+#[tauri::command(async)]
+fn run_maintenance(state: tauri::State<AppState>) -> Result<Vec<String>, String> {
+    let result = batch5::maintenance_run(chrono_now());
+    match &result {
+        Ok(report) => log_action(&state, "maintenance", true, &report.join("; ")),
+        Err(e) => log_action(&state, "maintenance", false, e),
+    }
+    result
+}
+
+#[tauri::command(async)]
+fn get_work_status(path: String) -> Result<batch5::WorkStatus, String> {
+    batch5::work_status(&path)
+}
+
+#[tauri::command(async)]
+fn set_work_mode(state: tauri::State<AppState>, path: String, on: bool, command: String) -> control_process::ActionResult {
+    let r = if on { batch5::work_start(&path, &command) } else { batch5::work_stop(&path) };
+    logged(&state, &format!("work_mode:{path}"), r)
+}
+
+#[tauri::command(async)]
+fn get_work_log(path: String) -> String {
+    batch5::work_log(&path)
+}
+
+#[tauri::command(async)]
+fn get_update_brief() -> batch5::UpdateBrief {
+    batch5::update_brief()
+}
+
+#[tauri::command(async)]
+fn get_pacnew_diff(path: String) -> Result<String, String> {
+    batch5::pacnew_diff(&path)
+}
+
+#[tauri::command(async)]
+fn resolve_pacnew(state: tauri::State<AppState>, path: String, use_new: bool) -> control_process::ActionResult {
+    logged(&state, &format!("pacnew:{path}"), batch5::pacnew_resolve(&path, use_new))
+}
+
+#[tauri::command(async)]
+fn open_update_terminal(state: tauri::State<AppState>) -> control_process::ActionResult {
+    logged(&state, "open_update_terminal", batch5::open_update_terminal())
+}
+
+#[tauri::command(async)]
+fn scan_files(folder: String) -> Result<batch5::FileScan, String> {
+    batch5::scan_files(&folder, chrono_now())
+}
+
+#[tauri::command(async)]
+fn trash_files(state: tauri::State<AppState>, paths: Vec<String>) -> control_process::ActionResult {
+    logged(&state, "trash_files", batch5::trash_files(&paths))
+}
+
+#[tauri::command(async)]
+fn get_backup() -> batch5::BackupView {
+    batch5::backup_view()
+}
+
+#[tauri::command(async)]
+fn save_backup(config: batch5::BackupConfig) -> control_process::ActionResult {
+    batch5::backup_save(config)
+}
+
+#[tauri::command(async)]
+fn backup_action(state: tauri::State<AppState>, action: String, name: String) -> control_process::ActionResult {
+    let r = match action.as_str() {
+        "start" => batch5::backup_start(chrono_now()),
+        "verify" => batch5::backup_verify(&name),
+        "delete" => batch5::backup_delete(&name),
+        "open" => batch5::backup_open(&name),
+        _ => sys_util::err("Unknown action"),
+    };
+    logged(&state, &format!("backup_{action}"), r)
+}
+
+#[derive(Serialize)]
+struct GameModeView {
+    mode: batch5::GameMode,
+    running: Option<String>,
+}
+
+#[tauri::command(async)]
+fn get_game_mode() -> GameModeView {
+    GameModeView { mode: batch5::game_mode(), running: batch5::running_game() }
+}
+
+#[tauri::command(async)]
+fn set_game_mode(mode: batch5::GameMode) {
+    batch5::set_game_mode(&mode)
+}
+
+#[tauri::command(async)]
+fn get_group_budgets() -> Vec<batch5::GroupUse> {
+    let apps: Vec<(String, u64)> = memory_map::breakdown().apps.iter().map(|a| (a.name.clone(), a.ram_bytes + a.swap_bytes)).collect();
+    batch5::group_use(&apps)
+}
+
+#[tauri::command(async)]
+fn save_group_budgets(budgets: Vec<batch5::GroupBudget>) {
+    batch5::save_group_budgets(&budgets)
+}
+
+#[tauri::command(async)]
+fn get_mixer() -> batch5::Mixer {
+    batch5::mixer()
+}
+
+#[tauri::command(async)]
+fn set_stream(id: u32, action: String, value: String) -> control_process::ActionResult {
+    batch5::stream_set(id, &action, &value)
+}
+
+#[tauri::command(async)]
+fn set_noise_suppression(state: tauri::State<AppState>, on: bool) -> control_process::ActionResult {
+    logged(&state, "noise_suppression", batch5::set_noise_suppression(on))
+}
+
+#[tauri::command(async)]
+fn set_usb_power(state: tauri::State<AppState>, port: String, what: String, on: bool) -> control_process::ActionResult {
+    logged(&state, &format!("usb_{what}:{port}"), batch5::set_usb_power(&port, &what, on))
+}
+
+#[tauri::command(async)]
+fn get_charge_once() -> batch5::ChargeOnce {
+    batch5::charge_once_status()
+}
+
+#[tauri::command(async)]
+fn start_charge_once(state: tauri::State<AppState>) -> control_process::ActionResult {
+    let r = batch5::charge_once_start(&state.db);
+    logged(&state, "full_charge_once", r)
+}
+
+#[tauri::command(async)]
+fn get_monitor_colours() -> Vec<batch5::MonitorColour> {
+    batch5::monitor_colours()
+}
+
+#[tauri::command(async)]
+fn set_monitor_colour(state: tauri::State<AppState>, name: String, mode: String, saturation: f64, brightness: f64) -> control_process::ActionResult {
+    logged(&state, &format!("monitor_colour:{name}"), batch5::set_monitor_colour(&name, &mode, saturation, brightness))
+}
+
+#[tauri::command(async)]
+fn get_preset_names(state: tauri::State<AppState>) -> Vec<(String, String)> {
+    tweak_presets::list(&tweaks::list(&state.db)).into_iter().map(|p| (p.id, p.name)).collect()
+}
+
+#[tauri::command(async)]
 fn get_focus() -> Option<batch3::Focus> {
     batch3::focus_current()
 }
@@ -1905,8 +2154,13 @@ fn handle_cli(app: &tauri::AppHandle, args: &[String]) -> bool {
             true
         }
         ["panic"] => {
-            app.emit("navigate", serde_json::json!({ "page": "memory" })).ok();
-            true
+            // The small window stays usable when the main one is crawling.
+            open_mini_window(app, true);
+            false
+        }
+        ["mini"] => {
+            open_mini_window(app, false);
+            false
         }
         _ => !args.iter().any(|a| a == "--hidden"),
     }
@@ -1955,6 +2209,35 @@ struct TraceTray {
 }
 
 type TrayHandles = ksni::blocking::Handle<TraceTray>;
+
+/// The small always-on-top monitor. `keep` leaves it open if it already is
+/// (the panic key should never close it); otherwise this toggles.
+fn open_mini_window(app: &tauri::AppHandle, keep: bool) {
+    if let Some(window) = app.get_webview_window("mini") {
+        if !keep {
+            window.close().ok();
+        }
+        return;
+    }
+    // Hyprland decides floating and pinning, not the app, so say it there
+    // before the window appears. Harmless to repeat.
+    if hypr::available() && hypr::is_lua() {
+        sys_util::run(std::process::Command::new("hyprctl").args([
+            "eval",
+            r#"hl.window_rule({ name = "trace-mini", match = { title = "^Trace Mini$" }, float = true, pin = true, size = "320 400", opaque = true, opacity = "1.0 override 1.0 override", no_initial_focus = true })"#,
+        ]))
+        .ok();
+    }
+    tauri::WebviewWindowBuilder::new(app, "mini", tauri::WebviewUrl::App("index.html?mini=1".into()))
+        .title("Trace Mini")
+        .inner_size(320.0, 400.0)
+        .resizable(false)
+        .decorations(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .build()
+        .ok();
+}
 
 fn toggle_main_window(app: &tauri::AppHandle) {
     use tauri::Emitter;
@@ -2024,6 +2307,16 @@ impl ksni::Tray for TraceTray {
             StandardItem {
                 label: "Show / hide Trace".into(),
                 activate: Box::new(|tray: &mut Self| toggle_main_window(&tray.app)),
+                ..Default::default()
+            }
+            .into(),
+            StandardItem {
+                label: "Mini monitor".into(),
+                activate: Box::new(|tray: &mut Self| {
+                    let app = tray.app.clone();
+                    // Windows must be made on the main thread.
+                    tray.app.run_on_main_thread(move || open_mini_window(&app, false)).ok();
+                }),
                 ..Default::default()
             }
             .into(),
@@ -2216,8 +2509,10 @@ fn get_recent_errors() -> Vec<health::LogLine> {
 }
 
 #[tauri::command(async)]
-fn check_drive_health() -> Result<Vec<health::DriveHealth>, String> {
-    health::drive_health()
+fn check_drive_health(state: tauri::State<AppState>) -> Result<Vec<health::DriveHealth>, String> {
+    let health = health::drive_health()?;
+    batch4::record_wear(&state.db, chrono_now(), &health);
+    Ok(health)
 }
 
 #[tauri::command(async)]
@@ -2402,6 +2697,13 @@ fn background_tick(state: &AppState, snap: &Snapshot, tick: u64) {
             reboot_needed: health::reboot_status().reboot_needed,
         };
         logbook::ingest_crashes(&state.db, tick == 0);
+        batch5::maintenance_reminder(now);
+        batch5::backup_tick(now);
+        // A weekly measurement of folder sizes, taken while on the charger.
+        let last = batch4::last_folder_snapshot(&state.db);
+        if now - last > 7 * 86_400 && snap.battery.as_ref().is_none_or(|b| b.status != "Discharging") {
+            batch4::snapshot_folders(now);
+        }
         logbook::ingest_power_events(&state.db, tick == 0);
         logbook::ingest_packages(&state.db);
         extras::ingest_trouble(&state.db);
@@ -2443,8 +2745,16 @@ fn background_tick(state: &AppState, snap: &Snapshot, tick: u64) {
     logbook::record_network(&state.db, now, &mut state.net_totals.lock().unwrap());
     logbook::flush_notifications(&state.db);
 
-    if let Some(app) = logbook::focused_app() {
-        logbook::record_focus(&state.db, now, TICK_SECS as i64, &app);
+    // Screen time only counts while someone is actually there.
+    if batch4::user_present(now) {
+        if let Some(app) = logbook::focused_app() {
+            logbook::record_focus(&state.db, now, TICK_SECS as i64, &app);
+        }
+    }
+    batch4::record_power(&state.db, now, snap.cpu_usage_percent);
+    batch4::store_folder_snapshot(&state.db);
+    if let Some((ok, message)) = batch5::charge_tick(&state.db) {
+        log_action(state, "full_charge_once", ok, &message);
     }
 
     if tick % 6 == 0 {
@@ -2462,6 +2772,14 @@ fn background_tick(state: &AppState, snap: &Snapshot, tick: u64) {
             .map(|a| (a.name.clone(), a.ram_bytes))
             .collect();
         logbook::record_running(&state.db, now, 6 * TICK_SECS as i64, &running);
+        let in_use: Vec<(String, u64)> = apps.iter().map(|a| (a.name.clone(), a.ram_bytes + a.swap_bytes)).collect();
+        for (ok, message) in batch5::group_tick(&in_use, now) {
+            log_action(state, "group_budget", ok, &message);
+        }
+        if let Some((ok, message)) = batch5::game_tick(&state.db) {
+            log_action(state, "game_mode", ok, &message);
+        }
+        batch4::record_connections(&state.db, now);
         let outcomes = automation::evaluate_rules(&config, &apps, &mut state.automation.lock().unwrap(), now);
         for o in outcomes {
             log_action(state, &o.description, o.ok, &o.message);
@@ -2586,6 +2904,7 @@ pub fn run() {
                     logbook::init(&state.db);
                     tweaks::init(&state.db);
                     more::init(&state.db);
+                    batch4::init(&state.db);
                     tweaks::reapply_session(&state.db);
                     state.db.prune_app_memory(chrono_now() - 14 * 86_400);
                     logbook::prune_raw(&state.db, chrono_now() - 90 * 86_400);
@@ -2670,6 +2989,49 @@ pub fn run() {
             scan_folder_sizes,
             get_memory_breakdown,
             get_security_report,
+            get_preset_names,
+            open_mini,
+            get_power_report,
+            get_folder_growth,
+            snapshot_folders,
+            get_measurements,
+            run_measurement,
+            clear_measurements,
+            get_access_log,
+            get_connections,
+            lookup_host,
+            what_is,
+            get_speed_history,
+            run_speed_test,
+            get_wifi_air,
+            get_wifi_qr,
+            get_drive_wear,
+            get_maintenance,
+            run_maintenance,
+            get_work_status,
+            set_work_mode,
+            get_work_log,
+            get_update_brief,
+            get_pacnew_diff,
+            resolve_pacnew,
+            open_update_terminal,
+            scan_files,
+            trash_files,
+            get_backup,
+            save_backup,
+            backup_action,
+            get_game_mode,
+            set_game_mode,
+            get_group_budgets,
+            save_group_budgets,
+            get_mixer,
+            set_stream,
+            set_noise_suppression,
+            set_usb_power,
+            get_charge_once,
+            start_charge_once,
+            get_monitor_colours,
+            set_monitor_colour,
             get_focus,
             set_focus,
             get_media_use,
@@ -2845,6 +3207,7 @@ mod tests {
 
         logbook::init(&state.db);
         tweaks::init(&state.db);
+        batch4::init(&state.db);
         logbook::ingest_crashes(&state.db, false);
         logbook::ingest_power_events(&state.db, false);
         logbook::ingest_packages(&state.db);
@@ -2918,6 +3281,21 @@ mod tests {
         dump("list_timers", json(&extras::timers()));
         dump("get_ports", json(&hardware::ports()));
         dump("get_security_report", json(&batch3::security_report()));
+        dump("get_power_report", json(&batch4::power_report(&state.db)));
+        dump("get_folder_growth", json(&batch4::folder_growth(&state.db, None)));
+        dump("get_access_log", json(&batch4::access_log()));
+        dump("get_connections", json(&batch4::connections(&state.db, chrono_now())));
+        dump("get_wifi_air", json(&batch4::wifi_air(false)));
+        dump("get_speed_history", json(&batch4::speed_history(&state.db)));
+        dump("get_maintenance", json(&batch5::maintenance_status()));
+        dump("get_update_brief", json(&batch5::update_brief()));
+        dump("get_backup", json(&batch5::backup_view()));
+        dump("get_mixer", json(&batch5::mixer()));
+        dump("get_monitor_colours", json(&batch5::monitor_colours()));
+        dump("get_charge_once", json(&batch5::charge_once_status()));
+        dump("get_work_status", json(&batch5::work_status(env!("CARGO_MANIFEST_DIR")).ok()));
+        dump("what_is", json(&batch4::what_is("kitty")));
+        assert!(batch4::user_present(chrono_now()));
         dump("get_media_use", json(&batch3::media_use()));
         dump("list_saved_wifi", json(&batch3::saved_wifi()));
         dump("get_privacy_items", json(&batch3::privacy_items()));

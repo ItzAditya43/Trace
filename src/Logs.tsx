@@ -7,6 +7,7 @@ import {
   formatDuration,
   usePoll,
 } from "./ui";
+import { AccessLog } from "./Batch4";
 
 interface Totals {
   hours_recorded: number;
@@ -581,6 +582,7 @@ export default function Logs() {
           )}
         />
       </section>
+      <AccessLog />
     </>
   );
 }

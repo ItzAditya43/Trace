@@ -21,6 +21,8 @@ pub enum Action {
     SetPowerProfile { profile: String },
     /// A Tweaks preset, by id (built-in) or name (saved).
     ApplyPreset { preset: String },
+    /// Makes a speaker or headset the default sound output.
+    SetAudioOutput { output: String },
     /// Runs a shell command of the user's own, as the user.
     RunCommand { command: String },
 }
@@ -48,6 +50,7 @@ impl Action {
             // Undo a preset from Tweaks → Recent changes, which knows the old values.
             Action::ApplyPreset { .. } => None,
             Action::RunCommand { .. } => None,
+            Action::SetAudioOutput { .. } => None,
         }
     }
 
@@ -73,6 +76,7 @@ impl Action {
             Action::SetPowerProfile { profile } => format!("Switch power profile to {profile}"),
             Action::ApplyPreset { preset } => format!("Apply the “{preset}” settings preset"),
             Action::RunCommand { command } => format!("Run: {command}"),
+            Action::SetAudioOutput { output } => format!("Send sound to {output}"),
         }
     }
 }

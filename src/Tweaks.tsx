@@ -2,6 +2,7 @@ import { useContext, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { NavContext } from "./nav";
 import { ConfirmButton, formatClock, formatDay, usePoll } from "./ui";
+import { MeasureEffect } from "./Batch4";
 
 interface TweakState {
   id: string;
@@ -631,6 +632,7 @@ export default function Tweaks() {
       )}
 
       {browsing && <TrustedHelper />}
+      {browsing && <MeasureEffect />}
 
       {browsing && (
         <section className="panel wide">

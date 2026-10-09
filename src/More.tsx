@@ -12,6 +12,7 @@ import {
   useAction,
   usePoll,
 } from "./ui";
+import { ChargeOnce } from "./Batch5";
 
 /** Tests link, router, internet and name lookups in turn and says where it breaks. */
 export function ConnectionDoctor() {
@@ -274,6 +275,7 @@ export function BatteryCareCard() {
           )}
         </div>
       )}
+      <ChargeOnce />
       <h3 className="sub-heading">Recent sleeps</h3>
       {data.sleeps.length === 0 && (
         <p className="diagnose-hint">None recorded yet. Each time the laptop sleeps, Trace notes how long and how much charge it cost.</p>

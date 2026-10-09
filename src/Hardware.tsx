@@ -11,6 +11,7 @@ import {
   usePoll,
 } from "./ui";
 import { StressTest } from "./Batch3";
+import { MonitorColours, UsbPower } from "./Batch5";
 
 interface Sensor {
   chip: string;
@@ -519,7 +520,7 @@ interface Ports {
 
 /** Everything plugged into the machine, socket by socket. */
 function PortsCard() {
-  const { data } = usePoll<Ports>("get_ports", undefined, 5000);
+  const { data, reload } = usePoll<Ports>("get_ports", undefined, 5000);
   if (!data) return null;
   const dot = (on: boolean) => <span className={on ? "status-ok" : "mem-muted"}>{on ? "●" : "○"}</span>;
   return (
@@ -591,9 +592,8 @@ function PortsCard() {
               </span>
               <span className="mem-muted">
                 {u.speed} · up to {u.max_power_ma} mA
-                {u.can_wake ? " · can wake the laptop" : ""}
-                {u.power_saving ? " · sleeps when idle" : ""}
               </span>
+              <UsbPower port={u.port} canWake={u.can_wake} saving={u.power_saving} onDone={reload} />
             </div>
           ))}
           {data.usb.length === 0 && <p className="diagnose-hint">Nothing is plugged in.</p>}
@@ -737,6 +737,7 @@ export default function Hardware() {
         </section>
       )}
       <Displays />
+      <MonitorColours />
     </>
   );
 }

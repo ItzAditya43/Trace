@@ -51,7 +51,8 @@ type BuilderAction =
   | { type: "SetPowerProfile"; profile: string }
   | { type: "StartService" | "StopService" | "RestartService"; name: string }
   | { type: "ApplyPreset"; preset: string }
-  | { type: "RunCommand"; command: string };
+  | { type: "RunCommand"; command: string }
+  | { type: "SetAudioOutput"; output: string };
 
 interface Profile {
   name: string;
@@ -75,6 +76,7 @@ const BUILDER_TYPES: { type: BuilderAction["type"]; label: string; field: string
   { type: "SetPowerProfile", label: "Set power profile", field: "profile" },
   { type: "ApplyPreset", label: "Apply settings preset", field: "preset" },
   { type: "RunCommand", label: "Run my own command", field: "command" },
+  { type: "SetAudioOutput", label: "Send sound to", field: "output" },
   { type: "StartService", label: "Start service", field: "name" },
   { type: "StopService", label: "Stop service", field: "name" },
   { type: "RestartService", label: "Restart service", field: "name" },
@@ -512,7 +514,7 @@ function ProfileBuilder({ apps, onSaved }: { apps: string[]; onSaved: () => void
         {actions.map((a, i) => (
           <li key={i}>
             {BUILDER_TYPES.find((t) => t.type === a.type)!.label}:{" "}
-            {"app" in a ? a.app : "profile" in a ? a.profile : "preset" in a ? a.preset : "command" in a ? a.command : a.name}{" "}
+            {"app" in a ? a.app : "profile" in a ? a.profile : "preset" in a ? a.preset : "command" in a ? a.command : "output" in a ? a.output : a.name}{" "}
             <button
               className="chip chip-button"
               onClick={() => setActions(actions.filter((_, j) => j !== i))}
@@ -550,6 +552,8 @@ function ProfileBuilder({ apps, onSaved }: { apps: string[]; onSaved: () => void
                 ? "Gaming (a preset name from Tweaks)"
                 : spec.field === "command"
                 ? "~/bin/my-script.sh, or any shell command"
+                : spec.field === "output"
+                ? "output name (see Sound Per App)"
                 : "bluetooth.service"
             }
             value={target}

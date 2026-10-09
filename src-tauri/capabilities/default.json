@@ -3,12 +3,15 @@
   "identifier": "default",
   "description": "Capability for the main window",
   "windows": [
-    "main"
+    "main",
+    "mini"
   ],
   "permissions": [
     "core:default",
     "core:window:allow-show",
     "core:window:allow-set-focus",
+    "core:window:allow-close",
+    "core:window:allow-start-dragging",
     "opener:default",
     "dialog:default"
   ]

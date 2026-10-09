@@ -112,28 +112,7 @@ pub fn security_report() -> SecurityReport {
         }
     }
 
-    let failed: Vec<String> = run_lossy(Command::new("journalctl").args([
-        "--since=-7d", "-q", "--no-pager", "-o", "short-iso", "-g", "authentication failure|Failed password|FAILED LOGIN|incorrect password",
-    ]))
-    .lines()
-    .rev()
-    .take(20)
-    .filter_map(|l| {
-        // "2026-10-09T18:39:45+05:30 host program[pid]: message"
-        let mut parts = l.splitn(4, ' ');
-        let when = parts.next()?.get(..16)?.replace('T', " ");
-        let program = parts.nth(1)?.split(['[', ':']).next()?;
-        let what = match program {
-            "qs" | "hyprlock" | "swaylock" | "gtklock" => "lock screen",
-            "sshd" | "sshd-session" => "remote login (SSH)",
-            "sudo" | "su" => "sudo in a terminal",
-            p if p.starts_with("polkit") => "password prompt",
-            "login" | "sddm-helper" | "gdm-password" | "greetd" => "login screen",
-            other => other,
-        };
-        Some(format!("{when} — wrong password at the {what}"))
-    })
-    .collect();
+    let failed: Vec<String> = crate::batch4::failed_logins().into_iter().rev().take(20).map(|(when, what)| format!("{when} — {}", what.to_lowercase())).collect();
     if failed.len() >= 10 {
         add("warn", "Many failed logins this week", "Listed below. A handful of your own mistyped passwords is normal; a long run from sshd is someone guessing.".into());
     }
@@ -197,6 +176,8 @@ pub struct SavedWifi {
     pub uuid: String,
     pub autoconnect: bool,
     pub last_used: i64,
+    /// Marked as costing data, so apps that check hold back.
+    pub metered: bool,
 }
 
 pub fn saved_wifi() -> Vec<SavedWifi> {
@@ -209,8 +190,11 @@ pub fn saved_wifi() -> Vec<SavedWifi> {
             if f.next()? != "802-11-wireless" {
                 return None;
             }
+            let uuid = f.next()?.to_string();
+            let metered = run_lossy(Command::new("nmcli").args(["-g", "connection.metered", "connection", "show", "uuid", &uuid])) == "yes";
             Some(SavedWifi {
-                uuid: f.next()?.to_string(),
+                metered,
+                uuid,
                 autoconnect: f.next()? == "yes",
                 last_used: f.next()?.parse().unwrap_or(0),
                 name: f.next()?.replace("\\:", ":"),
@@ -225,7 +209,7 @@ fn is_uuid(s: &str) -> bool {
     s.len() == 36 && s.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
 }
 
-/// `action`: "forget" | "auto_on" | "auto_off" | "password".
+/// `action`: "forget" | "auto_on" | "auto_off" | "metered_on" | "metered_off" | "password".
 pub fn wifi_action(uuid: &str, action: &str) -> ActionResult {
     if !is_uuid(uuid) {
         return err("Not a saved network");
@@ -236,6 +220,10 @@ pub fn wifi_action(uuid: &str, action: &str) -> ActionResult {
             "connection", "modify", "uuid", uuid, "connection.autoconnect", if action == "auto_on" { "yes" } else { "no" },
         ]))
         .map(|_| if action == "auto_on" { "Will join automatically".to_string() } else { "Won't join automatically".to_string() }),
+        "metered_on" | "metered_off" => run(Command::new("nmcli").args([
+            "connection", "modify", "uuid", uuid, "connection.metered", if action == "metered_on" { "yes" } else { "unknown" },
+        ]))
+        .map(|_| if action == "metered_on" { "Marked as limited data: Trace skips its update check here, and apps that respect the mark hold back downloads".to_string() } else { "No longer marked as limited data".to_string() }),
         "password" => run(Command::new("nmcli").args(["-s", "-g", "802-11-wireless-security.psk", "connection", "show", "uuid", uuid]))
             .map(|p| if p.is_empty() { "This network has no saved password".to_string() } else { format!("Password: {p}") }),
         _ => Err("Unknown action".to_string()),

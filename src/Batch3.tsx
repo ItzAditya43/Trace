@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { ConfirmButton, StatusLine, bytesToHuman, formatClock, formatDay, useAction, usePoll } from "./ui";
+import { WifiQr } from "./Batch4";
 
 const LEVEL_MARK: Record<string, [string, string]> = {
   good: ["✓", "status-ok"],
@@ -97,15 +98,17 @@ interface SavedWifi {
   uuid: string;
   autoconnect: boolean;
   last_used: number;
+  metered: boolean;
 }
 
 /** Saved Wi-Fi networks: show the password, stop joining automatically, forget. */
 export function SavedWifiCard() {
   const list = usePoll<SavedWifi[]>("list_saved_wifi", undefined, 60000);
   const { result, busy, run } = useAction(() => list.reload());
+  const [qr, setQr] = useState<SavedWifi | null>(null);
   if (!list.data || list.data.length === 0) return null;
   return (
-    <section className="panel">
+    <section className="panel wide">
       <h2>Saved Wi-Fi Networks</h2>
       <div className="event-scroll">
         {list.data.map((w) => (
@@ -121,13 +124,24 @@ export function SavedWifiCard() {
             <button className="chip chip-button" disabled={busy} onClick={() => run("saved_wifi_action", { uuid: w.uuid, action: "password" })}>
               Password
             </button>
+            <button className="chip chip-button" onClick={() => setQr(w)}>
+              QR
+            </button>
+            <button
+              className={`chip chip-button${w.metered ? " chip-on" : ""}`}
+              disabled={busy}
+              title="Mark as a connection where data costs money, such as a phone hotspot"
+              onClick={() => run("saved_wifi_action", { uuid: w.uuid, action: w.metered ? "metered_off" : "metered_on" })}
+            >
+              Limited data: {w.metered ? "on" : "off"}
+            </button>
             <button
               className="chip chip-button"
               disabled={busy}
               title={w.autoconnect ? "Stop joining this network by itself" : "Join this network by itself when in range"}
               onClick={() => run("saved_wifi_action", { uuid: w.uuid, action: w.autoconnect ? "auto_off" : "auto_on" })}
             >
-              {w.autoconnect ? "Auto-join: on" : "Auto-join: off"}
+              {w.autoconnect ? "Auto-join" : "Manual"}
             </button>
             <ConfirmButton
               className="chip chip-button"
@@ -139,6 +153,7 @@ export function SavedWifiCard() {
           </div>
         ))}
       </div>
+      {qr && <WifiQr uuid={qr.uuid} name={qr.name} onClose={() => setQr(null)} />}
       <StatusLine result={result} />
     </section>
   );

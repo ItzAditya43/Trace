@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Sparkline, bytesToHuman, formatDay, usePoll } from "./ui";
 import { BatteryCareCard } from "./More";
 import { MediaUseCard, SecurityCheckup } from "./Batch3";
+import { DiskGrowth, DriveWear, PowerPerApp } from "./Batch4";
 
 interface Issue {
   severity: "critical" | "warn" | "info";
@@ -226,6 +227,7 @@ function Drives({ drives }: { drives: HealthOverview["drives"] }) {
       </div>
       {error && <p className="status-fail">✗ {error}</p>}
       {note && <p className="status-ok">✓ {note}</p>}
+      <DriveWear />
       <p className="diagnose-hint">
         Drive self-test data (SMART) is only readable by root, so checking it
         asks for your password. "Wear" is how much of an SSD's rated lifetime
@@ -335,6 +337,8 @@ export default function Health() {
       ))}
 
       <BatteryCareCard />
+      <PowerPerApp />
+      <DiskGrowth />
       <SecurityCheckup />
       <MediaUseCard />
 
