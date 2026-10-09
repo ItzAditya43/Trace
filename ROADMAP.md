@@ -13,9 +13,7 @@ Two things apply to several ideas:
 
 ## Suggested next
 
-**49** (fan speed and curves) is the one idea not built. Everything is in place except the experiment, which needs a reboot into the new kernel and someone at the machine.
-
-**45** (Ask Trace) stays out: no AI features, by decision.
+Every idea here is built except two that are out by decision: **45** (Ask Trace: no AI features) and **49** (fan curves: specific to one laptop model).
 
 Known limits inside built ideas: the frame-rate overlay in game mode is MangoHud's own launch option rather than something Trace switches on; spinning disks can't be erased from Trace; countries for addresses come from a registry lookup on request, not a local database.
 
@@ -107,12 +105,7 @@ Known limits inside built ideas: the frame-rate overlay in game mode is MangoHud
 
 ## Hardware and display ideas added later
 
-49. **Fan speed and curves (M) — next, needs a reboot first.** The firmware of the ASUS Vivobook M3500QC does have a real fan-duty call; Linux just never uses it. Found by decompiling the firmware tables:
-    - `\_SB.PCI0.SBRG.EC0.ST84(fan, duty)` sets a fan's duty (fan 0 or 1, duty 0–255); `ST83(fan)` reads it back (0xFF appears to mean "automatic"); `TACH(fan)` reads RPM.
-    - Nothing in the firmware tables calls `ST84`, and the ASUS WMI interface the kernel driver uses reports fan curves as unsupported, so it can't be reached through the driver.
-    - The controller is driven through a firmware call (SMI) with a shared buffer, not ordinary controller registers — reading those returns all zeros.
-    - Safe way to call it: the `acpi_call` kernel module (installed, loads after the reboot into the new kernel), which runs the method under the firmware's own locks.
-    - Still to find out, with the machine in front of someone: which call returns a fan to automatic, and the lowest duty that keeps it spinning. Until that is known nothing should write to it unattended.
+49. **Fan speed and curves (M) — not part of this repository.** Setting a fan speed means talking to one laptop model's embedded controller directly, so it is not something to ship for every machine. Generic switches (full speed on or off where the kernel offers it, and temperature rules) are built.
 50. ✅ **Built** (Hardware → Temperature Rules) — **Thermal rules (M).** "Above 85°C for a minute → quiet profile / cap CPU at 70%; below 70°C → back." Needs a way to act without a password prompt each time (see 53).
 51. ✅ **Built** (Hardware → Cooling Test, optionally loading the graphics chip too) — **Stress test and cooling check (M).** A timed CPU or GPU load with a temperature and throttling curve, to judge paste, dust and fan health, and to compare before and after cleaning.
 52. ✅ **Built** (Hardware → Colour Per Monitor: colour mode, saturation, brightness, and a colour profile file) — **Per-monitor colour (M).** Colour profiles (ICC), gamma and saturation per display, and HDR on/off where the panel supports it.

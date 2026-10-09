@@ -1,0 +1,73 @@
+# Getting started
+
+## What you need
+
+- Linux with a desktop session. Trace is developed on Arch Linux with Hyprland; most of it works on any distribution and desktop.
+- WebKitGTK 4.1, which Tauri uses to draw the window.
+- Optional tools unlock individual features. [Requirements](requirements.md) lists them; anything missing is simply hidden or says what to install.
+
+## Installing
+
+**From a release.** Download the build for your system from the Releases page and install it the usual way for its format.
+
+**From source.**
+
+```bash
+npm install
+npm run tauri build          # packages for your distribution
+npm run tauri build -- --no-bundle   # just the program: src-tauri/target/release/trace
+```
+
+To run the bare program from your launcher, copy it somewhere on your path and add a desktop entry:
+
+```bash
+install -m 755 src-tauri/target/release/trace ~/.local/bin/trace
+```
+
+```ini
+# ~/.local/share/applications/trace.desktop
+[Desktop Entry]
+Type=Application
+Name=Trace
+Comment=Observe, understand, and control your Linux machine
+Exec=/home/YOU/.local/bin/trace
+Icon=trace
+Terminal=false
+Categories=System;
+StartupWMClass=trace
+```
+
+## First run
+
+Trace opens on **Overview**. A **Quick Set-up** card asks four questions (battery, memory, development, games) and applies the matching presets. Answer it or press **Not now**; either way it does not come back.
+
+Recording starts immediately. Pages that show history (History, Logs, leak detection, disk growth, battery drain) fill in as time passes.
+
+## The tray
+
+Closing the window hides Trace instead of quitting it, so the logbook, rules, schedules and alerts keep working.
+
+- **Left click** the tray icon to show or hide the window.
+- **Right click** for live CPU, memory and temperature, the mini monitor, the power profile, keep-awake and Quit.
+
+If your bar has no tray area, launching Trace again brings the window back. To make closing the window quit instead, switch off *Keep running when the window is closed* under **Control → Automation → Trace Itself**.
+
+## Starting at login
+
+**Control → Automation → Trace Itself → Start at login.** Trace adds a clearly marked block to your desktop's autostart file and removes it again when you switch this off. It starts hidden, in the tray.
+
+Rules, schedules, alerts and the logbook only work while Trace is running, so this is worth switching on.
+
+## The mini monitor
+
+A small always-on-top window with CPU, memory, temperature, network and the six heaviest apps, each with Freeze and Quit. Open it from the tray menu, from **Trace Itself**, or with `trace mini`. `trace panic` opens it and never closes it, which makes it a good key binding for when the desktop is crawling.
+
+## Where things are kept
+
+| What | Where |
+|---|---|
+| History and logbook | `~/.local/share/trace/history.sqlite3` |
+| Rules, schedules, presets, other settings | JSON files in `~/.local/share/trace/` |
+| Profiles | TOML files in the same folder |
+
+Raw ten-second samples are kept for 90 days. The logbook's hourly and daily records are kept indefinitely.
