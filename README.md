@@ -19,7 +19,7 @@ Built with Tauri (Rust) + React/TypeScript.
 - **Logs** — a daily / weekly / monthly / yearly logbook: screen time per app, apps that ran, CPU/RAM/temperature, battery drain and cycles, network data used, crashes, sleep / lid / login times, package changes, warnings, alerts sent and control actions; any period exports as JSON
 - **Investigate** — "What's slowing me down?" diagnosis, plus port → process lookup
 - **Projects** — every project's branch, uncommitted and unpushed work, size and TODOs, with one-click open
-- **Tweaks** — a curated catalogue of about 200 system settings (around 190 apply to a typical laptop), each with a plain explanation:
+- **Tweaks** — a curated catalogue of about 260 system settings (only the ones your machine actually has are shown — over 200 on a typical laptop), each with a plain explanation:
   - *what* — power and CPU, laptop and battery, memory and swap, disks, network, desktop effects and windows (Hyprland, GTK), mouse / keyboard / touchpad, audio, privacy and security, background services, developer limits, clock and logs
   - *how* — settings that need root are collected and applied with **one** password prompt; every change is read back and reported honestly if the system ignored it; anything can be undone or reset to the value Trace first saw; chosen settings can be kept across reboots
   - *presets* — Battery saver, Balanced, Performance, Gaming, Quiet and cool, zram tuning, Lightweight desktop, Security hardening, Developer workstation, plus your own

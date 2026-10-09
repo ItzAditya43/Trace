@@ -124,6 +124,8 @@ pub struct Tweak {
     pub options_file: Option<&'static str>,
     /// Root shell command run before writing (e.g. loading a module).
     pub pre: &'static str,
+    /// Only offered while this system service is running.
+    pub requires_active: Option<&'static str>,
 }
 
 impl Tweak {
@@ -151,7 +153,12 @@ impl Tweak {
             effect: "",
             options_file: None,
             pre: "",
+            requires_active: None,
         }
+    }
+    pub fn needs_active(mut self, unit: &'static str) -> Self {
+        self.requires_active = Some(unit);
+        self
     }
     pub fn onoff(mut self, on: &'static str, off: &'static str) -> Self {
         self.on = on;
@@ -229,6 +236,8 @@ struct UnitState {
 /// Things worth fetching once per pass rather than once per tweak.
 pub struct ReadCtx {
     units: HashMap<(bool, String), UnitState>,
+    /// Services that some settings depend on, and whether each is running.
+    active: HashMap<&'static str, bool>,
     audio_settings: OnceLock<String>,
 }
 
@@ -273,8 +282,22 @@ impl ReadCtx {
                 );
             }
         }
+        let needed: Vec<&'static str> = {
+            let mut names: Vec<&'static str> = catalog().iter().filter_map(|t| t.requires_active).collect();
+            names.sort();
+            names.dedup();
+            names
+        };
+        // `is-active` prints one state per unit, in the order asked.
+        let states = run_lossy(Command::new("systemctl").arg("is-active").args(&needed));
+        let active = needed
+            .iter()
+            .zip(states.lines())
+            .map(|(name, state)| (*name, state.trim() == "active"))
+            .collect();
         ReadCtx {
             units,
+            active,
             audio_settings: OnceLock::new(),
         }
     }
@@ -585,6 +608,11 @@ fn read_custom(t: &Tweak, custom: Custom, ctx: &ReadCtx) -> Option<Reading> {
 
 /// Reads a tweak's current state, or None if this machine doesn't have it.
 pub fn read(t: &Tweak, ctx: &ReadCtx) -> Option<Reading> {
+    if let Some(unit) = t.requires_active {
+        if !ctx.active.get(unit).copied().unwrap_or(false) {
+            return None;
+        }
+    }
     match &t.src {
         Src::Sysctl(keys) => {
             let raw = read_trimmed(&sysctl_path(keys[0]))?;
@@ -668,7 +696,11 @@ pub fn read(t: &Tweak, ctx: &ReadCtx) -> Option<Reading> {
                         prop,
                     ]))
                     .ok()?;
-                    out.split('"').nth(1)?.to_string()
+                    // `s "ignore"` for text properties, `b false` for switches.
+                    match out.trim().strip_prefix("b ") {
+                        Some(flag) => if flag == "true" { "yes" } else { "no" }.to_string(),
+                        None => out.split('"').nth(1)?.to_string(),
+                    }
                 }
                 Reader::NmConfig => {
                     let out = run(Command::new("NetworkManager").arg("--print-config")).ok()?;
@@ -1717,5 +1749,21 @@ mod tests {
         }
         let out = run(Command::new("sh").args(["-c", &script])).unwrap();
         assert_eq!(out.lines().collect::<Vec<_>>(), ["TRACE_OK 0", "TRACE_FAIL 1 nope"]);
+    }
+}
+
+#[cfg(test)]
+mod timing {
+    /// Reading the whole catalogue has to stay quick: it runs every time the
+    /// Tweaks page opens.
+    #[test]
+    fn listing_every_setting_is_fast() {
+        let db = crate::db::Db { conn: std::sync::Mutex::new(rusqlite::Connection::open_in_memory().unwrap()) };
+        super::init(&db);
+        let started = std::time::Instant::now();
+        let states = super::list(&db);
+        let elapsed = started.elapsed();
+        eprintln!("listed {} settings in {:?}", states.len(), elapsed);
+        assert!(elapsed.as_secs() < 6, "took {elapsed:?}");
     }
 }

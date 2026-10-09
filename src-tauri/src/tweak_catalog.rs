@@ -763,5 +763,185 @@ pub fn build() -> Vec<Tweak> {
                  reader: Reader::CatConfig("systemd/system.conf"), reload: "" },
         &[("", "Default (90 seconds)"), ("10s", "10 seconds"), ("30s", "30 seconds"), ("90s", "90 seconds")]).effect("after a reboot"));
 
+    // ================================================================ second batch
+    // ---- Power & CPU
+    t.push(sysfs("gpu.amd_performance_level", POWER, "AMD graphics power level",
+        "How the AMD graphics chip manages its own speed. Automatic is right almost always; low pins it to its slowest state for maximum battery, high to its fastest.",
+        &["/sys/class/drm/card*/device/power_dpm_force_performance_level"],
+        choice(&[("auto", "Automatic"), ("low", "Low — slowest, coolest"), ("high", "High — fastest")])));
+    t.push(sysfs("gpu.amd_panel_power", POWER, "Adaptive backlight (AMD)",
+        "Dims the backlight and brightens the picture to match, saving a good share of screen power on battery. Higher levels save more and distort colours more; 0 is off.",
+        &["/sys/class/drm/card*-eDP-*/amdgpu/panel_power_savings"], num(0.0, 4.0, 1.0, "")));
+    t.push(sysfs("cpu.amd_dynamic_epp", POWER, "Switch energy preference with the charger",
+        "Lets the AMD driver itself move between performance on mains and power saving on battery, instead of holding whatever was last set.",
+        &["/sys/devices/system/cpu/amd_pstate/dynamic_epp"], Kind::Toggle).onoff("enabled", "disabled").persist(Persist::Never));
+    t.push(sysfs("cpu.intel_dynamic_boost", POWER, "Boost when programs wait on disk (Intel)",
+        "Briefly raises CPU speed when a task has just been waiting for I/O, which makes disk-heavy work feel snappier at a small power cost.",
+        &["/sys/devices/system/cpu/intel_pstate/hwp_dynamic_boost"], Kind::Toggle));
+    t.push(sysfs("cpu.intel_max_perf", POWER, "Cap CPU performance (Intel)",
+        "The highest performance level the processor may use, as a percentage. Lower it to cut heat and fan noise.",
+        &["/sys/devices/system/cpu/intel_pstate/max_perf_pct"], num(20.0, 100.0, 5.0, "%")));
+
+    // ---- Laptop & Battery
+    t.push(sysfs("laptop.conservation_mode", LAPTOP, "Battery conservation mode (Lenovo)",
+        "Stops charging at about 60% to protect a battery that lives on the charger.",
+        &["/sys/bus/platform/drivers/ideapad_acpi/VPC*/conservation_mode"], Kind::Toggle));
+    t.push(sysfs("laptop.fn_lock", LAPTOP, "Fn lock (Lenovo)",
+        "Swaps the top row between F1–F12 and the media keys printed on them.",
+        &["/sys/bus/platform/drivers/ideapad_acpi/VPC*/fn_lock"], Kind::Toggle));
+    t.push(sysfs("laptop.usb_charging", LAPTOP, "Charge USB devices while the laptop is off (Lenovo)",
+        "Keeps the always-on USB port powered when the laptop sleeps or is shut down.",
+        &["/sys/bus/platform/drivers/ideapad_acpi/VPC*/usb_charging"], Kind::Toggle));
+    t.push(dropin("logind.kill_user_processes", LAPTOP, "When you log out, your running programs",
+        "Whether programs you left running — a terminal multiplexer, a download, a build — survive logging out.",
+        DropIn { file: LOGIND_FILE, section: "Login", key: "KillUserProcesses",
+                 reader: Reader::Logind("KillUserProcesses"), reload: "systemctl reload systemd-logind" },
+        &[("no", "Keep running"), ("yes", "Are ended")]).careful());
+
+    // ---- Network (only while systemd-resolved is the resolver)
+    let resolved = |id: &'static str, title: &'static str, help: &'static str, key: &'static str, options: &[(&'static str, &'static str)]| {
+        dropin(id, NETWORK, title, help,
+            DropIn { file: "/etc/systemd/resolved.conf.d/99-trace.conf", section: "Resolve", key,
+                     reader: Reader::CatConfig("systemd/resolved.conf"), reload: "systemctl restart systemd-resolved" },
+            options).needs_active("systemd-resolved.service")
+    };
+    t.push(resolved("dns.over_tls", "Encrypt DNS lookups (DNS over TLS)",
+        "Hides which sites you look up from the networks in between. Opportunistic uses it when the server supports it; strict refuses to look anything up otherwise.",
+        "DNSOverTLS", &[("", "Default"), ("no", "Off"), ("opportunistic", "When available"), ("yes", "Always (strict)")]));
+    t.push(resolved("dns.dnssec", "Verify DNS answers (DNSSEC)",
+        "Checks that answers are signed by the domain's owner, so they can't be forged on the way. Strict mode breaks on networks whose DNS server strips the signatures.",
+        "DNSSEC", &[("", "Default"), ("no", "Off"), ("allow-downgrade", "When the server supports it"), ("yes", "Always (strict)")]).careful());
+    t.push(resolved("dns.llmnr", "Windows-style local name lookup (LLMNR)",
+        "Finds machines on the local network by bare name. A well-known way to trick a machine into talking to an impostor on shared networks.",
+        "LLMNR", &[("", "Default"), ("yes", "Answer and look up"), ("resolve", "Look up only"), ("no", "Off")]));
+    t.push(resolved("dns.mdns", "Local .local name lookup (mDNS)",
+        "Finds and announces machines by their .local names. Turn off here if Avahi already does it, or to stop announcing this machine.",
+        "MulticastDNS", &[("", "Default"), ("yes", "Answer and look up"), ("resolve", "Look up only"), ("no", "Off")]));
+
+    // ---- Desktop & Windows
+    t.push(gtk("gtk.font_antialiasing", DESKTOP, "Text smoothing",
+        "How text edges are smoothed. Subpixel is sharpest on ordinary LCDs; greyscale suits OLED, rotated or very high-density screens.",
+        "org.gnome.desktop.interface", "font-antialiasing",
+        choice(&[("rgba", "Subpixel (sharpest on LCD)"), ("grayscale", "Greyscale"), ("none", "None")])));
+    t.push(gtk("gtk.font_hinting", DESKTOP, "Text hinting",
+        "How strongly letter shapes are snapped to the pixel grid. More is crisper and less faithful to the font's design.",
+        "org.gnome.desktop.interface", "font-hinting",
+        choice(&[("none", "None"), ("slight", "Slight"), ("medium", "Medium"), ("full", "Full")])));
+    t.push(gtk("gtk.overlay_scrolling", DESKTOP, "Thin scrollbars that appear on hover",
+        "Scrollbars stay hidden until you scroll or point at them. Off keeps a full-width bar always visible.",
+        "org.gnome.desktop.interface", "overlay-scrolling", Kind::Toggle));
+    t.push(gtk("gtk.cursor_blink", DESKTOP, "Blinking text cursor",
+        "The text cursor blinks in apps. Off keeps it steady.", "org.gnome.desktop.interface", "cursor-blink", Kind::Toggle));
+    t.push(gtk("gtk.files_show_hidden", DESKTOP, "Show hidden files in file pickers",
+        "Open and Save dialogs list files whose names start with a dot.",
+        "org.gtk.gtk4.Settings.FileChooser", "show-hidden", Kind::Toggle));
+    t.push(gtk("gtk.files_folders_first", DESKTOP, "Folders first in file pickers",
+        "Open and Save dialogs list folders before files.",
+        "org.gtk.gtk4.Settings.FileChooser", "sort-directories-first", Kind::Toggle));
+    t.push(gtk("gtk3.files_show_hidden", DESKTOP, "Show hidden files in older apps' file pickers",
+        "The same, for apps built on the previous toolkit version (GTK 3).",
+        "org.gtk.Settings.FileChooser", "show-hidden", Kind::Toggle));
+    t.push(gtk("gtk3.files_folders_first", DESKTOP, "Folders first in older apps' file pickers",
+        "The same, for apps built on the previous toolkit version (GTK 3).",
+        "org.gtk.Settings.FileChooser", "sort-directories-first", Kind::Toggle));
+    t.push(hypr("hypr.blur_popups", DESKTOP, "Blur behind menus and pop-ups",
+        "Also blurs behind right-click menus and tooltips. Looks consistent; costs a little more.",
+        "decoration:blur:popups", Kind::Toggle));
+    t.push(hypr("hypr.blur_special", DESKTOP, "Blur behind the scratchpad workspace",
+        "Blurs everything underneath when the special (scratchpad) workspace is shown. Expensive.",
+        "decoration:blur:special", Kind::Toggle));
+    t.push(hypr("hypr.blur_noise", DESKTOP, "Blur grain",
+        "A little noise over blurred areas, which hides colour banding. 0 is perfectly smooth.",
+        "decoration:blur:noise", num(0.0, 0.3, 0.01, "")));
+    t.push(hypr("hypr.blur_vibrancy", DESKTOP, "Blur colour boost",
+        "How much colours behind blurred surfaces are saturated.", "decoration:blur:vibrancy", num(0.0, 1.0, 0.05, "")));
+    t.push(hypr("hypr.shadow_range", DESKTOP, "Shadow size",
+        "How far window shadows spread, in pixels.", "decoration:shadow:range", num(1.0, 60.0, 1.0, "px")));
+    t.push(hypr("hypr.snap", DESKTOP, "Floating windows snap together",
+        "Floating windows stick to each other's edges and to the screen edge as you drag them.",
+        "general:snap:enabled", Kind::Toggle));
+    t.push(hypr("hypr.border_grab_area", DESKTOP, "Width of the resize edge",
+        "How far outside a window's border you can still grab it to resize.",
+        "general:extend_border_grab_area", num(0.0, 40.0, 1.0, "px")));
+    t.push(hypr("hypr.force_split", DESKTOP, "Where a new tiled window goes",
+        "Whether a new window opens on the side the pointer is on, or always on the same side.",
+        "dwindle:force_split", choice(&[("0", "Follow the pointer"), ("1", "Always left / top"), ("2", "Always right / bottom")])));
+    t.push(hypr("hypr.smart_split", DESKTOP, "Split towards the pointer's corner",
+        "The split direction is chosen by which quarter of the window the pointer is in, so you can aim where a new window lands.",
+        "dwindle:smart_split", Kind::Toggle));
+    t.push(hypr("hypr.unfocused_fps", DESKTOP, "Frame rate of hidden windows",
+        "How often windows on other workspaces are allowed to redraw. Low saves power; raise it if a video or game stutters right after you switch back.",
+        "misc:render_unfocused_fps", num(1.0, 60.0, 1.0, "fps")));
+    t.push(hypr("hypr.focus_under_fullscreen", DESKTOP, "A window opening under a full-screen one",
+        "What happens when something asks for focus while another window is full-screen.",
+        "misc:on_focus_under_fullscreen", choice(&[("0", "Stay on the full-screen window"), ("1", "Show the new window, keep full-screen"), ("2", "Leave full-screen")])));
+    t.push(hypr("hypr.close_special_on_empty", DESKTOP, "Close the scratchpad when it empties",
+        "The special workspace hides itself once its last window is gone.", "misc:close_special_on_empty", Kind::Toggle));
+    t.push(hypr("hypr.workspace_cycles", DESKTOP, "Allow workspace back-and-forth loops",
+        "Switching to the previous workspace repeatedly alternates between two, instead of walking further back through history.",
+        "binds:allow_workspace_cycles", Kind::Toggle));
+
+    // ---- Mouse, Keyboard & Touchpad
+    t.push(hypr("input.caps_lock", INPUT, "Caps Lock key",
+        "What the Caps Lock key does. Replaces any other keyboard options set in your config for this session.",
+        "input:kb_options",
+        choice(&[("", "Caps Lock (normal)"), ("caps:escape", "Escape"), ("caps:swapescape", "Swap with Escape"), ("ctrl:nocaps", "Control"), ("caps:super", "Super"), ("caps:none", "Nothing")])));
+    t.push(hypr("input.mouse_refocus", INPUT, "Refocus when the pointer is moved by a window change",
+        "When a window opens or closes under a still pointer, focus moves to whatever is now beneath it.",
+        "input:mouse_refocus", Kind::Toggle));
+    t.push(hypr("input.mouse_focuses_monitor", INPUT, "Moving to another screen focuses it",
+        "Carrying the pointer onto another monitor makes that monitor the active one.",
+        "misc:mouse_move_focuses_monitor", Kind::Toggle));
+    t.push(hypr("input.no_warps", INPUT, "Never move the pointer for me",
+        "Stops the pointer from jumping to a window when focus changes by keyboard.", "cursor:no_warps", Kind::Toggle));
+    t.push(hypr("input.persistent_warps", INPUT, "Remember pointer position per window",
+        "Returning to a window by keyboard puts the pointer back where it last was inside it.",
+        "cursor:persistent_warps", Kind::Toggle));
+    t.push(sysfs("input.mouse_polling", INPUT, "USB mouse polling rate",
+        "How often USB mice are asked for their position. 1000 Hz is smoothest for games and uses a little more CPU. Unplug and re-plug the mouse for it to take effect.",
+        &["/sys/module/usbhid/parameters/mousepoll"],
+        choice(&[("0", "Mouse's own default"), ("8", "125 Hz"), ("4", "250 Hz"), ("2", "500 Hz"), ("1", "1000 Hz")]))
+        .effect("after re-plugging the mouse"));
+
+    // ---- Background Services
+    t.push(service("svc.fwupd_refresh", "Check for firmware updates",
+        "Periodically downloads the list of firmware updates for your hardware. Nothing is installed without you.",
+        &["fwupd-refresh.timer"]));
+    t.push(service("svc.smartd", "Drive health monitoring",
+        "Watches your drives' self-test data in the background and logs a warning when one starts to fail.",
+        &["smartd.service"]));
+    t.push(service("svc.nfs", "NFS file server", "Shares folders with other Linux and Unix machines.", &["nfs-server.service"]));
+    t.push(service("svc.tor", "Tor", "The Tor anonymity network client.", &["tor.service"]));
+    t.push(service("svc.jellyfin", "Jellyfin media server", "Streams your media library to other devices.", &["jellyfin.service"]));
+    t.push(service("svc.plex", "Plex media server", "Streams your media library to other devices.", &["plexmediaserver.service"]));
+    t.push(service("svc.teamviewer", "TeamViewer daemon",
+        "Lets TeamViewer accept remote-control connections. It runs all the time once installed, whether or not you use it.",
+        &["teamviewerd.service"]));
+    t.push(service("svc.anydesk", "AnyDesk daemon",
+        "Lets AnyDesk accept remote-control connections. It runs all the time once installed, whether or not you use it.",
+        &["anydesk.service"]));
+    t.push(service("svc.warp", "Cloudflare WARP", "The Cloudflare WARP VPN daemon.", &["warp-svc.service"]));
+    t.push(service("svc.zerotier", "ZeroTier", "The ZeroTier private network daemon.", &["zerotier-one.service"]));
+    t.push(service("svc.nordvpn", "NordVPN daemon", "The background service behind the NordVPN app.", &["nordvpnd.service"]));
+    t.push(service("svc.mullvad", "Mullvad VPN daemon", "The background service behind the Mullvad app.", &["mullvad-daemon.service"]));
+    t.push(service("svc.protonvpn", "Proton VPN daemon", "The background service behind the Proton VPN app.", &["proton.VPN.service"]));
+    t.push(service("svc.asusd", "ASUS laptop control (asusd)", "The asusctl daemon: fan curves, keyboard lighting and charge limits on ASUS laptops.", &["asusd.service"]));
+    t.push(service("svc.supergfx", "ASUS graphics switching (supergfxd)", "Switches between integrated and dedicated graphics on ASUS laptops.", &["supergfxd.service"]));
+
+    // ---- Developer
+    t.push(sysctl("net.core.somaxconn", DEVELOPER, "Pending-connection queue length",
+        "How many incoming connections may wait for a server program to accept them. Load tests against a local server hit the old default.",
+        choice(&[("128", "128 (old default)"), ("4096", "4,096"), ("65535", "65,535")])));
+    t.push(dropin("systemd.open_files", DEVELOPER, "Open-file limit for programs",
+        "How many files and sockets one program may have open — the limit behind \"Too many open files\". Raising it costs nothing.",
+        DropIn { file: "/etc/systemd/system.conf.d/99-trace.conf", section: "Manager", key: "DefaultLimitNOFILE",
+                 reader: Reader::CatConfig("systemd/system.conf"), reload: "" },
+        &[("", "Default (1,024, raisable to 524,288)"), ("65536:524288", "65,536"), ("1048576:1048576", "1,048,576")]).effect("after a reboot"));
+
+    // ---- System
+    t.push(sysctl("kernel.panic", SYSTEM, "After a kernel crash",
+        "Whether the machine restarts by itself after a kernel panic or stays frozen so the message can be read.",
+        choice(&[("0", "Stay frozen"), ("10", "Restart after 10 seconds"), ("60", "Restart after a minute")])));
+
     t
 }
