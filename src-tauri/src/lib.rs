@@ -2830,6 +2830,11 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // Only the main window hides to the tray; the mini window
+                // really closes, so it stops refreshing.
+                if window.label() != "main" {
+                    return;
+                }
                 let state = window.state::<AppState>();
                 let has_tray = state.tray.lock().unwrap().is_some();
                 // Keep recording in the background; the tray icon (or

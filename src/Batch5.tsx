@@ -753,20 +753,28 @@ export function Mini() {
   const [snap, setSnap] = useState<MiniSnapshot | null>(null);
   const [apps, setApps] = useState<{ name: string; ram_bytes: number; swap_bytes: number }[]>([]);
   const [note, setNote] = useState<ActionResult | null>(null);
-  async function refresh() {
-    setSnap(await invoke("get_snapshot"));
+  async function refreshApps() {
     const memory = await invoke<{ apps: { name: string; ram_bytes: number; swap_bytes: number }[] }>("get_memory_breakdown");
     setApps(memory.apps.slice(0, 6));
+  }
+  async function refresh() {
+    setSnap(await invoke("get_snapshot"));
   }
   useEffect(() => {
     document.body.classList.add("mini-body");
     refresh();
-    const t = setInterval(refresh, 3000);
-    return () => clearInterval(t);
+    refreshApps();
+    // Reading every app's memory is the costly part, so it is done less often.
+    const fast = setInterval(refresh, 3000);
+    const slow = setInterval(refreshApps, 12000);
+    return () => {
+      clearInterval(fast);
+      clearInterval(slow);
+    };
   }, []);
   async function act(name: string, action: string) {
     setNote(await invoke("app_action", { name, action }));
-    refresh();
+    refreshApps();
   }
   if (!snap) return <p className="loading">…</p>;
   const ram = (snap.used_memory_bytes / snap.total_memory_bytes) * 100;
