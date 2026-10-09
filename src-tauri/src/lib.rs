@@ -129,6 +129,7 @@ struct AppState {
     display_state: Mutex<hardware::DisplayState>,
     pending: Mutex<extras::Pending>,
     sleepers: Mutex<extras::SleeperState>,
+    thermal: Mutex<extras::ThermalState>,
     net_totals: Mutex<std::collections::HashMap<String, (u64, u64)>>,
 }
 
@@ -217,6 +218,20 @@ fn read_amd_gpus() -> Vec<GpuInfo> {
 }
 
 fn read_nvidia_gpus() -> Vec<GpuInfo> {
+    // When the driver isn't usable (not installed, or mismatched until a
+    // reboot) the tool fails every time; don't spawn it on every snapshot.
+    static FAILED_AT: Mutex<Option<Instant>> = Mutex::new(None);
+    if FAILED_AT.lock().unwrap().is_some_and(|at| at.elapsed().as_secs() < 120) {
+        return Vec::new();
+    }
+    let gpus = query_nvidia_gpus();
+    if gpus.is_empty() {
+        *FAILED_AT.lock().unwrap() = Some(Instant::now());
+    }
+    gpus
+}
+
+fn query_nvidia_gpus() -> Vec<GpuInfo> {
     let output = Command::new("nvidia-smi")
         .args([
             "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw",
@@ -1596,6 +1611,25 @@ fn set_external_brightness(number: u32, percent: u32) -> control_process::Action
 }
 
 #[tauri::command(async)]
+fn get_ports() -> hardware::Ports {
+    hardware::ports()
+}
+
+#[tauri::command(async)]
+fn get_helper_status() -> tweaks::HelperStatus {
+    tweaks::helper_status()
+}
+
+#[tauri::command(async)]
+fn set_helper(state: tauri::State<AppState>, install: bool) -> control_process::ActionResult {
+    let r = match tweaks::set_helper(install) {
+        Ok(message) => sys_util::ok(message),
+        Err(e) => sys_util::err(e),
+    };
+    logged(&state, if install { "helper_install" } else { "helper_remove" }, r)
+}
+
+#[tauri::command(async)]
 fn explain_now(state: tauri::State<AppState>) -> extras::Explanation {
     let snap = take_snapshot(&state);
     let mut top_cpu: Vec<(String, f32)> = {
@@ -1726,13 +1760,18 @@ struct AppInfo {
     version: &'static str,
     /// Whether a tray icon could be created on this desktop.
     tray: bool,
+    visible: bool,
 }
 
 #[tauri::command(async)]
-fn get_app_info(state: tauri::State<AppState>) -> AppInfo {
+fn get_app_info(app: tauri::AppHandle, state: tauri::State<AppState>) -> AppInfo {
     AppInfo {
         version: env!("CARGO_PKG_VERSION"),
         tray: state.tray.lock().unwrap().is_some(),
+        visible: app
+            .get_webview_window("main")
+            .and_then(|w| w.is_visible().ok())
+            .unwrap_or(true),
     }
 }
 
@@ -1745,6 +1784,8 @@ struct TrayHandles {
 
 fn show_main_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
+        use tauri::Emitter;
+        window.emit("trace-visible", true).ok();
         window.show().ok();
         window.unminimize().ok();
         window.set_focus().ok();
@@ -2127,6 +2168,14 @@ fn background_tick(state: &AppState, snap: &Snapshot, tick: u64) {
     if let Some(note) = hardware::tick(&mut state.display_state.lock().unwrap()) {
         log_action(state, "display_layout", true, &note);
     }
+    let thermal_rules = config.thermal.clone();
+    if !thermal_rules.is_empty() {
+        let hottest = snap.temperatures.iter().map(|t| t.celsius).fold(0.0, f32::max);
+        let outcomes = state.thermal.lock().unwrap().step(&state.db, &thermal_rules, hottest);
+        for (description, ok, message) in outcomes {
+            log_action(state, &description, ok, &message);
+        }
+    }
     let due_action = extras::tick_pending(&mut state.pending.lock().unwrap(), now);
     if let Some(action) = due_action {
         let r = if action == "awake_off" {
@@ -2217,6 +2266,10 @@ pub fn run() {
                 if has_tray && automation::load().close_to_tray {
                     api.prevent_close();
                     window.hide().ok();
+                    // Tell the page to stop refreshing: a hidden window that
+                    // keeps polling is most of what an idle Trace would cost.
+                    use tauri::Emitter;
+                    window.emit("trace-visible", false).ok();
                 }
             }
         })
@@ -2235,6 +2288,7 @@ pub fn run() {
             display_state: Mutex::new(hardware::DisplayState::default()),
             pending: Mutex::new(extras::Pending::default()),
             sleepers: Mutex::new(extras::SleeperState::default()),
+            thermal: Mutex::new(extras::ThermalState::default()),
             net_totals: Mutex::new(std::collections::HashMap::new()),
         })
         .setup(move |app| {
@@ -2356,6 +2410,9 @@ pub fn run() {
             list_namespaces,
             scan_folder_sizes,
             get_memory_breakdown,
+            get_ports,
+            get_helper_status,
+            set_helper,
             get_hardware,
             get_displays,
             apply_monitors,
@@ -2487,6 +2544,7 @@ mod tests {
             display_state: Mutex::new(hardware::DisplayState::default()),
             pending: Mutex::new(extras::Pending::default()),
             sleepers: Mutex::new(extras::SleeperState::default()),
+            thermal: Mutex::new(extras::ThermalState::default()),
             net_totals: Mutex::new(std::collections::HashMap::new()),
         };
         let snap = take_snapshot(&state);
@@ -2577,6 +2635,8 @@ mod tests {
             }),
         );
         dump("list_timers", json(&extras::timers()));
+        dump("get_ports", json(&hardware::ports()));
+        dump("get_helper_status", json(&tweaks::helper_status()));
         let all = tweaks::list(&state.db);
         dump(
             "get_tweaks",

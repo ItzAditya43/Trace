@@ -1,6 +1,35 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
+import { listen } from "@tauri-apps/api/event";
+
+// Whether the window is on screen. While it is hidden in the tray nothing
+// on the page refreshes, so an idle Trace costs next to nothing.
+let windowVisible = true;
+const visibilityListeners = new Set<() => void>();
+invoke<{ visible: boolean }>("get_app_info")
+  .then((info) => {
+    windowVisible = info.visible;
+  })
+  .catch(() => {});
+listen<boolean>("trace-visible", (event) => {
+  const becameVisible = event.payload && !windowVisible;
+  windowVisible = event.payload;
+  // Catch up immediately when the window comes back.
+  if (becameVisible) visibilityListeners.forEach((refresh) => refresh());
+}).catch(() => {});
+
+export function isWindowVisible(): boolean {
+  return windowVisible;
+}
+
+export function onWindowShown(refresh: () => void): () => void {
+  visibilityListeners.add(refresh);
+  return () => {
+    visibilityListeners.delete(refresh);
+  };
+}
+
 export interface ActionResult {
   ok: boolean;
   message: string;
@@ -64,10 +93,16 @@ export function usePoll<T>(
   useEffect(() => {
     alive.current = true;
     reload();
-    const id = intervalMs ? setInterval(reload, intervalMs) : undefined;
+    const id = intervalMs
+      ? setInterval(() => {
+          if (isWindowVisible()) reload();
+        }, intervalMs)
+      : undefined;
+    const stop = intervalMs ? onWindowShown(reload) : undefined;
     return () => {
       alive.current = false;
       if (id) clearInterval(id);
+      stop?.();
     };
   }, [reload, intervalMs]);
 

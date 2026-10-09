@@ -427,3 +427,131 @@ mod tests {
         assert_eq!(state.last_focus["trace-test-not-running"], 20_000);
     }
 }
+
+// ---- thermal rules: act on temperature, and undo when it cools ----
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ThermalRule {
+    pub id: String,
+    /// Act when the hottest sensor has been at or above this for 30 seconds.
+    pub above_c: u32,
+    /// A setting from the Tweaks catalogue and the value to give it.
+    pub tweak_id: String,
+    pub value: String,
+    #[serde(default = "enabled_by_default")]
+    pub enabled: bool,
+}
+
+fn enabled_by_default() -> bool {
+    true
+}
+
+/// How far below the threshold it must cool before the rule lets go, so a
+/// temperature hovering at the line doesn't flip the setting back and forth.
+const COOL_MARGIN_C: f32 = 10.0;
+const SUSTAIN_TICKS: u32 = 3;
+
+#[derive(Default)]
+pub struct ThermalState {
+    hot: HashMap<String, u32>,
+    cool: HashMap<String, u32>,
+    /// Rule id -> the value the setting had before the rule changed it.
+    active: HashMap<String, String>,
+}
+
+impl ThermalState {
+    /// What each rule should do this tick: Some(true) = engage, Some(false) = release.
+    fn decide(&mut self, rule: &ThermalRule, hottest: f32) -> Option<bool> {
+        let engaged = self.active.contains_key(&rule.id);
+        if !engaged && hottest >= rule.above_c as f32 {
+            let n = self.hot.entry(rule.id.clone()).or_default();
+            *n += 1;
+            return (*n >= SUSTAIN_TICKS).then_some(true);
+        }
+        self.hot.remove(&rule.id);
+        if engaged && hottest <= rule.above_c as f32 - COOL_MARGIN_C {
+            let n = self.cool.entry(rule.id.clone()).or_default();
+            *n += 1;
+            return (*n >= SUSTAIN_TICKS).then_some(false);
+        }
+        self.cool.remove(&rule.id);
+        None
+    }
+
+    /// One pass over the rules. Returns (description, ok, message) per action taken.
+    pub fn step(&mut self, db: &Db, rules: &[ThermalRule], hottest: f32) -> Vec<(String, bool, String)> {
+        let mut log = Vec::new();
+        // A rule that was removed or switched off while engaged lets go at once.
+        let gone: Vec<String> = self
+            .active
+            .keys()
+            .filter(|id| !rules.iter().any(|r| r.enabled && r.id == **id))
+            .cloned()
+            .collect();
+        for id in gone {
+            self.active.remove(&id);
+        }
+        for rule in rules.iter().filter(|r| r.enabled) {
+            let Some(engage) = self.decide(rule, hottest) else {
+                continue;
+            };
+            let Some(tweak) = crate::tweaks::find(&rule.tweak_id) else {
+                continue;
+            };
+            let target = if engage {
+                rule.value.clone()
+            } else {
+                self.active.get(&rule.id).cloned().unwrap_or_default()
+            };
+            let before = crate::tweaks::read(tweak, &crate::tweaks::ReadCtx::new()).map(|r| r.value).unwrap_or_default();
+            let change = crate::tweaks::Change { id: rule.tweak_id.clone(), value: target.clone() };
+            let results = crate::tweaks::apply_with(db, &[change], "thermal rule", None, false);
+            let ok = results.iter().all(|r| r.ok);
+            let message = results.first().map(|r| r.message.clone()).unwrap_or_default();
+            if engage {
+                // Remember what to go back to even if applying failed, so a
+                // later success isn't "restored" to the wrong thing.
+                self.active.insert(rule.id.clone(), before);
+                self.hot.remove(&rule.id);
+                notify(
+                    &format!("Trace: {:.0}°C", hottest),
+                    &format!("{} set to {} ({message})", tweak.title, target),
+                    false,
+                );
+            } else {
+                self.active.remove(&rule.id);
+                self.cool.remove(&rule.id);
+            }
+            log.push((
+                format!("thermal:{} {}", tweak.id, if engage { "engaged" } else { "released" }),
+                ok,
+                format!("{:.0}°C — {} → {target}: {message}", hottest, tweak.title),
+            ));
+        }
+        log
+    }
+}
+
+#[cfg(test)]
+mod thermal_tests {
+    use super::*;
+
+    #[test]
+    fn engages_after_sustained_heat_and_releases_only_once_well_below() {
+        let rule = ThermalRule { id: "r".into(), above_c: 85, tweak_id: "power.profile".into(), value: "power-saver".into(), enabled: true };
+        let mut s = ThermalState::default();
+        assert_eq!(s.decide(&rule, 86.0), None);
+        assert_eq!(s.decide(&rule, 84.0), None, "a dip resets the count");
+        assert_eq!(s.decide(&rule, 90.0), None);
+        assert_eq!(s.decide(&rule, 90.0), None);
+        assert_eq!(s.decide(&rule, 90.0), Some(true));
+        s.active.insert("r".into(), "balanced".into());
+        // Hovering just under the threshold is not "cooled down".
+        for _ in 0..5 {
+            assert_eq!(s.decide(&rule, 80.0), None);
+        }
+        assert_eq!(s.decide(&rule, 74.0), None);
+        assert_eq!(s.decide(&rule, 74.0), None);
+        assert_eq!(s.decide(&rule, 74.0), Some(false));
+    }
+}

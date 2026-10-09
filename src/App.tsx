@@ -14,7 +14,7 @@ import { ExplainNow, PinnedSwitches } from "./Quick";
 import { listen } from "@tauri-apps/api/event";
 import SearchPalette from "./SearchPalette";
 import { NavContext, NavTarget } from "./nav";
-import { Tile } from "./ui";
+import { Tile, isWindowVisible, onWindowShown } from "./ui";
 import UpdateBanner from "./UpdateBanner";
 import "./App.css";
 
@@ -189,10 +189,14 @@ function App() {
       }
     }
     poll();
-    const id = setInterval(poll, 2000);
+    const id = setInterval(() => {
+      if (isWindowVisible()) poll();
+    }, 2000);
+    const stop = onWindowShown(poll);
     return () => {
       cancelled = true;
       clearInterval(id);
+      stop();
     };
   }, []);
 

@@ -218,6 +218,9 @@ pub fn build() -> Vec<Tweak> {
     t.push(sysfs("power.mem_sleep", POWER, "Sleep type",
         "What \"sleep\" means. s2idle keeps the machine half-awake for an instant resume; deep powers nearly everything off and saves far more battery, if your laptop wakes from it reliably.",
         &["/sys/power/mem_sleep"], discovered()).careful().effect("the next time it sleeps"));
+    t.push(sysfs("fan.full_speed", POWER, "Fans at full speed",
+        "Pins every fan at maximum instead of letting the firmware decide. Loud, and the coolest the machine can run. Off hands control back to the firmware.",
+        &["/sys/class/hwmon/hwmon*/pwm*_enable"], Kind::Toggle).onoff("0", "2").persist(Persist::Never));
     t.push(custom("power.keep_awake", POWER, "Keep awake",
         "Stops the machine from sleeping or blanking the screen on idle — for a long download, a presentation or a film. Lasts until you turn it off or Trace quits.",
         Custom::KeepAwake, Kind::Toggle));

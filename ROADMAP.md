@@ -103,13 +103,13 @@ Two things apply to several ideas:
 
 ## Hardware and display ideas added later
 
-49. **Fan curves (M).** Temperature → fan-speed curves with a graph editor, on machines whose fans accept a speed (many laptops, including ASUS ones, only offer automatic or full).
-50. **Thermal rules (M).** "Above 85°C for a minute → quiet profile / cap CPU at 70%; below 70°C → back." Needs a way to act without a password prompt each time (see 53).
+49. **Fan curves (M).** *Not possible on laptops whose firmware exposes only "automatic" and "full speed" to Linux (this includes the ASUS Vivobook Trace is developed on); temperature rules (50) are the substitute.* Temperature → fan-speed curves with a graph editor, on machines whose fans accept a speed (many laptops, including ASUS ones, only offer automatic or full).
+50. ✅ **Built** (Hardware → Temperature Rules) — **Thermal rules (M).** "Above 85°C for a minute → quiet profile / cap CPU at 70%; below 70°C → back." Needs a way to act without a password prompt each time (see 53).
 51. **Stress test and cooling check (M).** A timed CPU or GPU load with a temperature and throttling curve, to judge paste, dust and fan health, and to compare before and after cleaning.
 52. **Per-monitor colour (M).** Colour profiles (ICC), gamma and saturation per display, and HDR on/off where the panel supports it.
-53. **Trusted helper (L).** A small root-owned helper that only accepts the catalogue's own settings and values, so presets, thermal rules and schedules can change root-level settings without a password prompt each time. Opt-in.
+53. ✅ **Built** (Tweaks → Trusted Helper, with its own log) — **Trusted helper (L).** A small root-owned helper that only accepts the catalogue's own settings and values, so presets, thermal rules and schedules can change root-level settings without a password prompt each time. Opt-in.
 54. **Keyboard and lighting (S).** Backlight timeout, per-zone RGB where the laptop exposes it, and "light up on key press only".
-55. **USB power per port (S).** Which ports wake the laptop, which keep charging while it sleeps, and per-device power saving.
+55. ✅ **Built** (read-only so far: Hardware → Ports & Connections) — **USB power per port (S).** Which ports wake the laptop, which keep charging while it sleeps, and per-device power saving.
 56. **Drive tools (M).** Run a SMART self-test, see wear over time, secure-erase and trim on demand.
 57. **Audio hardware (M).** Per-app volume and output, an equaliser preset per device, and microphone noise suppression on/off.
 58. **Dock memory (S).** Remember per dock or monitor: layout, audio output, power profile and which apps to start.

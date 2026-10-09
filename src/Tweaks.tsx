@@ -331,6 +331,82 @@ function PresetCard({
   );
 }
 
+/** The opt-in helper that lets Trace change root-level settings by itself, and its log. */
+function TrustedHelper() {
+  const { data, reload } = usePoll<{ installed: boolean; current: boolean; allowed: number; log: string[] }>(
+    "get_helper_status"
+  );
+  const [note, setNote] = useState<{ ok: boolean; message: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [showLog, setShowLog] = useState(false);
+  if (!data) return null;
+
+  async function set(install: boolean) {
+    setBusy(true);
+    try {
+      setNote(await invoke("set_helper", { install }));
+    } catch (e) {
+      setNote({ ok: false, message: String(e) });
+    } finally {
+      setBusy(false);
+      reload();
+    }
+  }
+
+  return (
+    <section className="panel wide">
+      <h2>Trusted Helper {data.installed && <span className="mem-muted">installed</span>}</h2>
+      <p className="tweak-help">
+        Normally every root-level change asks for your password, which means Trace can't make one by
+        itself — a temperature rule or a schedule has to skip it. The helper is a small root-owned
+        script that accepts only {data.allowed} specific setting-and-value pairs from this catalogue
+        (power, CPU, memory, disk and network tuning — nothing marked expert, no security settings,
+        no services, no config files). With it installed those changes need no password, from you or
+        from Trace.
+      </p>
+      <div className="control-actions">
+        {data.installed ? (
+          <>
+            <ConfirmButton label="Remove the helper 🔒" className="ctl-btn" disabled={busy} onConfirm={() => set(false)} />
+            {!data.current && (
+              <button className="ctl-btn ctl-primary" disabled={busy} onClick={() => set(true)}>
+                Update it 🔒
+              </button>
+            )}
+          </>
+        ) : (
+          <ConfirmButton
+            label="Install the helper 🔒"
+            confirmLabel="Any program running as you could then change those settings — confirm"
+            className="ctl-btn"
+            disabled={busy}
+            onConfirm={() => set(true)}
+          />
+        )}
+        <button className="ctl-btn" onClick={() => setShowLog(!showLog)}>
+          {showLog ? "Hide its log" : `Show its log (${data.log.length})`}
+        </button>
+      </div>
+      {note && <p className={note.ok ? "status-ok" : "status-fail"}>{note.ok ? "✓" : "✗"} {note.message}</p>}
+      {data.installed && !data.current && (
+        <p className="diagnose-hint">The installed helper is older than this version of Trace; newer settings fall back to asking for your password until it is updated.</p>
+      )}
+      {showLog && (
+        <pre className="log-view">
+          {data.log.length === 0 ? "The helper hasn't been used yet." : data.log.join("\n")}
+        </pre>
+      )}
+      <p className="diagnose-hint">
+        Every use is written to /var/log/trace-helper.log by the helper itself — time, who asked,
+        the setting, the value and whether it worked — so you can see exactly what was changed
+        without you. What Trace does by itself also appears in Recent changes below (marked "thermal
+        rule" or with the preset's name) where each change has an Undo, and in the action log under
+        Control → Automation.
+      </p>
+    </section>
+  );
+}
+
 export default function Tweaks() {
   const { target } = useContext(NavContext);
   const { data, reload } = usePoll<TweaksView>("get_tweaks");
@@ -553,6 +629,8 @@ export default function Tweaks() {
           </p>
         </section>
       )}
+
+      {browsing && <TrustedHelper />}
 
       {browsing && (
         <section className="panel wide">

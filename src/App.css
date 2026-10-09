@@ -2359,3 +2359,16 @@ kbd {
   justify-content: space-between;
   gap: 12px;
 }
+
+.usb-row {
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  padding: 4px 0;
+  border-bottom: 1px solid #1e212b;
+}
+
+.usb-row .folder-name {
+  font-size: 13px;
+  color: #e6e8ee;
+}

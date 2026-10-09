@@ -255,7 +255,7 @@ pub fn gpus(state: &mut GpuState) -> Vec<GpuDevice> {
 
 // ---- peripherals ----
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct Peripheral {
     pub name: String,
     /// "mouse", "keyboard", "headset", …
@@ -265,7 +265,22 @@ pub struct Peripheral {
 }
 
 /// Battery levels of wireless mice, keyboards, headsets and the like.
+/// Asking UPower spawns a process, and these levels move slowly, so the
+/// answer is reused for half a minute.
 pub fn peripherals() -> Vec<Peripheral> {
+    static CACHE: std::sync::Mutex<Option<(Instant, Vec<Peripheral>)>> = std::sync::Mutex::new(None);
+    let mut cache = CACHE.lock().unwrap();
+    if let Some((at, list)) = cache.as_ref() {
+        if at.elapsed().as_secs() < 30 {
+            return list.clone();
+        }
+    }
+    let fresh = read_peripherals();
+    *cache = Some((Instant::now(), fresh.clone()));
+    fresh
+}
+
+fn read_peripherals() -> Vec<Peripheral> {
     let dump = run_lossy(Command::new("upower").arg("-d"));
     dump.split("\n\n")
         .filter_map(|block| {
@@ -296,6 +311,198 @@ pub fn peripherals() -> Vec<Peripheral> {
             })
         })
         .collect()
+}
+
+// ---- ports: what is plugged into what ----
+
+#[derive(Serialize)]
+pub struct UsbDevice {
+    /// Bus and port path, e.g. "1-2.3".
+    pub port: String,
+    pub name: String,
+    /// "Low (1.5 Mbit/s)" … "SuperSpeed (5 Gbit/s)"
+    pub speed: String,
+    /// What it may draw, as declared by the device.
+    pub max_power_ma: u32,
+    pub driver: String,
+    /// May suspend when idle.
+    pub power_saving: bool,
+    /// May wake the machine from sleep.
+    pub can_wake: bool,
+}
+
+#[derive(Serialize)]
+pub struct VideoPort {
+    pub connector: String,
+    pub connected: bool,
+    pub monitor: String,
+}
+
+#[derive(Serialize)]
+pub struct NetworkPort {
+    pub interface: String,
+    /// "Ethernet" | "Wi-Fi"
+    pub kind: String,
+    pub connected: bool,
+    pub speed_mbps: Option<u32>,
+}
+
+#[derive(Serialize)]
+pub struct AudioPort {
+    pub device: String,
+    pub port: String,
+    /// "plugged in" | "not plugged in" | "always available"
+    pub state: String,
+    pub active: bool,
+}
+
+#[derive(Serialize)]
+pub struct Ports {
+    pub charger_connected: Option<bool>,
+    /// Watts flowing into (+) or out of (−) the battery.
+    pub battery_watts: Option<f32>,
+    pub usb: Vec<UsbDevice>,
+    pub video: Vec<VideoPort>,
+    pub network: Vec<NetworkPort>,
+    pub audio: Vec<AudioPort>,
+}
+
+fn usb_speed(mbps: &str) -> String {
+    match mbps {
+        "1.5" => "Low speed (1.5 Mbit/s)",
+        "12" => "Full speed (12 Mbit/s)",
+        "480" => "High speed (480 Mbit/s, USB 2)",
+        "5000" => "SuperSpeed (5 Gbit/s, USB 3)",
+        "10000" => "SuperSpeed+ (10 Gbit/s)",
+        "20000" => "SuperSpeed+ (20 Gbit/s)",
+        other => return format!("{other} Mbit/s"),
+    }
+    .to_string()
+}
+
+/// The monitor's name out of its EDID block (descriptor tag 0xFC), if present.
+fn edid_name(edid: &[u8]) -> Option<String> {
+    edid.get(54..126)?.chunks(18).find_map(|d| {
+        // The name ends at a line feed and is padded with spaces.
+        (d[0] == 0 && d[1] == 0 && d[3] == 0xFC).then(|| {
+            let text = String::from_utf8_lossy(&d[5..18]).to_string();
+            text.split(['\n', '\0']).next().unwrap_or("").trim().to_string()
+        })
+    })
+}
+
+pub fn ports() -> Ports {
+    let mut usb: Vec<UsbDevice> = fs::read_dir("/sys/bus/usb/devices")
+        .map(|dir| {
+            dir.flatten()
+                .filter_map(|e| {
+                    let port = e.file_name().to_string_lossy().to_string();
+                    // Skip interfaces ("1-2:1.0") and the controllers themselves ("usb1").
+                    if port.contains(':') || port.starts_with("usb") {
+                        return None;
+                    }
+                    let base = e.path().to_string_lossy().to_string();
+                    let text = |f: &str| read_trimmed(&format!("{base}/{f}")).unwrap_or_default();
+                    // Hubs are plumbing, not something the user plugged in.
+                    if text("bDeviceClass") == "09" {
+                        return None;
+                    }
+                    let name = [text("manufacturer"), text("product")].join(" ").trim().to_string();
+                    let driver = fs::read_dir(&base)
+                        .ok()?
+                        .flatten()
+                        .filter(|i| i.file_name().to_string_lossy().contains(':'))
+                        .find_map(|i| fs::read_link(i.path().join("driver")).ok())
+                        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+                        .unwrap_or_default();
+                    Some(UsbDevice {
+                        name: if name.is_empty() { format!("Device {}:{}", text("idVendor"), text("idProduct")) } else { name },
+                        speed: usb_speed(&text("speed")),
+                        max_power_ma: text("bMaxPower").trim_end_matches("mA").parse().unwrap_or(0),
+                        driver,
+                        power_saving: text("power/control") == "auto",
+                        can_wake: text("power/wakeup") == "enabled",
+                        port,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    usb.sort_by(|a, b| a.port.cmp(&b.port));
+
+    let mut video: Vec<VideoPort> = fs::read_dir("/sys/class/drm")
+        .map(|dir| {
+            dir.flatten()
+                .filter_map(|e| {
+                    let name = e.file_name().to_string_lossy().to_string();
+                    let connector = name.split_once('-')?.1.to_string();
+                    let status = read_trimmed(&format!("{}/status", e.path().display()))?;
+                    let monitor = fs::read(e.path().join("edid")).ok().and_then(|b| edid_name(&b)).unwrap_or_default();
+                    Some(VideoPort { connector, connected: status == "connected", monitor })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    video.sort_by(|a, b| b.connected.cmp(&a.connected).then(a.connector.cmp(&b.connector)));
+
+    let mut network: Vec<NetworkPort> = fs::read_dir("/sys/class/net")
+        .map(|dir| {
+            dir.flatten()
+                .filter_map(|e| {
+                    let base = e.path().to_string_lossy().to_string();
+                    // Only interfaces backed by hardware.
+                    if !std::path::Path::new(&format!("{base}/device")).exists() {
+                        return None;
+                    }
+                    let connected = read_num::<u8>(&format!("{base}/carrier")) == Some(1);
+                    Some(NetworkPort {
+                        kind: if std::path::Path::new(&format!("{base}/wireless")).exists() { "Wi-Fi" } else { "Ethernet" }.to_string(),
+                        speed_mbps: read_num::<i32>(&format!("{base}/speed")).filter(|s| *s > 0 && connected).map(|s| s as u32),
+                        connected,
+                        interface: e.file_name().to_string_lossy().to_string(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    network.sort_by(|a, b| a.interface.cmp(&b.interface));
+
+    let mut audio = Vec::new();
+    let sinks = run_lossy(Command::new("pactl").args(["-f", "json", "list", "sinks"]));
+    if let Ok(serde_json::Value::Array(list)) = serde_json::from_str(&sinks) {
+        for sink in list {
+            let active = sink["active_port"].as_str().unwrap_or_default().to_string();
+            for port in sink["ports"].as_array().into_iter().flatten() {
+                audio.push(AudioPort {
+                    device: sink["description"].as_str().unwrap_or_default().to_string(),
+                    port: port["description"].as_str().unwrap_or_default().to_string(),
+                    state: match port["availability"].as_str().unwrap_or_default() {
+                        "available" => "plugged in",
+                        "not available" => "not available",
+                        _ => "always available",
+                    }
+                    .to_string(),
+                    active: port["name"].as_str() == Some(active.as_str()),
+                });
+            }
+        }
+    }
+
+    let battery = crate::health::battery_health().into_iter().next();
+    Ports {
+        charger_connected: fs::read_dir("/sys/class/power_supply").ok().and_then(|dir| {
+            dir.flatten().find_map(|e| {
+                let base = e.path().to_string_lossy().to_string();
+                (read_trimmed(&format!("{base}/type")).as_deref() == Some("Mains"))
+                    .then(|| read_num::<u8>(&format!("{base}/online")) == Some(1))
+            })
+        }),
+        battery_watts: battery.map(|b| if b.status == "Discharging" { -b.power_watts } else { b.power_watts }),
+        usb,
+        video,
+        network,
+        audio,
+    }
 }
 
 // ---- screen brightness ----
@@ -704,6 +911,38 @@ mod tests {
         let mut rotated = current[0].setup.clone();
         rotated.transform = 9;
         assert!(validate_setup(&rotated, &current).is_err());
+    }
+
+    /// Re-applies every connected monitor's current settings and sets each
+    /// external monitor's brightness to what it already is. Nothing visibly
+    /// changes, but it runs the real commands end to end. `--ignored`.
+    #[test]
+    #[ignore]
+    fn reapplies_the_current_display_setup_for_real() {
+        let before: Vec<MonitorSetup> = monitors().into_iter().map(|m| m.setup).collect();
+        if before.is_empty() {
+            return;
+        }
+        let r = apply_monitors(&before);
+        assert!(r.ok, "{}", r.message);
+        std::thread::sleep(std::time::Duration::from_millis(800));
+        let after: Vec<MonitorSetup> = monitors().into_iter().map(|m| m.setup).collect();
+        assert_eq!(before, after, "re-applying the same setup must change nothing");
+        for display in external_displays() {
+            if let Some(level) = display.brightness {
+                let r = set_external_brightness(display.number, level);
+                assert!(r.ok, "{}", r.message);
+            }
+        }
+    }
+
+    #[test]
+    fn reads_a_monitor_name_from_edid() {
+        let mut edid = vec![0u8; 128];
+        edid[54 + 18..54 + 18 + 5].copy_from_slice(&[0, 0, 0, 0xFC, 0]);
+        edid[54 + 18 + 5..54 + 18 + 12].copy_from_slice(b"PM161Q\n");
+        assert_eq!(edid_name(&edid).as_deref(), Some("PM161Q"));
+        assert_eq!(edid_name(&[0u8; 20]), None);
     }
 
     #[test]

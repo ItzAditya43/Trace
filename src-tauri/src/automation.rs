@@ -97,6 +97,9 @@ pub struct Config {
     /// Apps that are frozen after going unused for a while.
     #[serde(default)]
     pub sleepers: Vec<crate::extras::Sleeper>,
+    /// Settings changed while the machine is hot, and put back when it cools.
+    #[serde(default)]
+    pub thermal: Vec<crate::extras::ThermalRule>,
 }
 
 fn yes() -> bool {
@@ -112,6 +115,7 @@ impl Default for Config {
             schedules: Vec::new(),
             pinned: Vec::new(),
             sleepers: Vec::new(),
+            thermal: Vec::new(),
         }
     }
 }
@@ -298,6 +302,7 @@ mod tests {
         Config {
             pinned: Vec::new(),
             sleepers: Vec::new(),
+            thermal: Vec::new(),
             alerts_enabled: true,
             close_to_tray: true,
             rules: vec![Rule {

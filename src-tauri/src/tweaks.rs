@@ -1009,6 +1009,136 @@ fn boot_install_fragment(kept: &[(&'static Tweak, String)]) -> Result<String, St
     ))
 }
 
+// ---- trusted helper: root-level changes without a prompt each time ----
+//
+// Opt-in. A root-owned script that accepts nothing but "<setting> <value>"
+// pairs from a list baked in when it is installed, plus a polkit rule that
+// lets the logged-in user run exactly that script. Trace can then change
+// those settings by itself (thermal rules, schedules) — and every call is
+// written to a log the user can read.
+
+pub const HELPER_SCRIPT: &str = "/etc/trace/helper.sh";
+const HELPER_RULE: &str = "/etc/polkit-1/rules.d/49-trace-helper.rules";
+pub const HELPER_LOG: &str = "/var/log/trace-helper.log";
+
+/// Whether a setting may go through the helper at all. Deliberately narrow:
+/// performance, power and memory tunables that are harmless to flip — no
+/// services, no config files, nothing marked expert, nothing security-related.
+fn helper_eligible(t: &Tweak) -> bool {
+    if t.risk == Risk::Expert || t.category == "Privacy & Security" || t.category == "Developer" {
+        return false;
+    }
+    match &t.src {
+        Src::Sysctl(_) | Src::Sysfs(_) => true,
+        Src::Custom(c) => matches!(c, Custom::CpuMaxFreq | Custom::WifiPowerSave),
+        _ => false,
+    }
+}
+
+/// Every value of a setting the helper will accept.
+fn helper_values(t: &Tweak, reading: &Reading) -> Vec<String> {
+    match &t.kind {
+        Kind::Toggle => vec!["on".to_string(), "off".to_string()],
+        Kind::Choice(_) => reading
+            .options
+            .iter()
+            .filter(|(_, label)| !label.ends_with("(current)"))
+            .map(|(v, _)| v.clone())
+            .collect(),
+        Kind::Number { min, max, step, .. } => {
+            let (lo, hi) = (reading.min.unwrap_or(*min), reading.max.unwrap_or(*max));
+            let mut values = Vec::new();
+            let mut n = lo;
+            while n <= hi + 1e-9 && values.len() < 400 {
+                values.push(format_number(n));
+                n += step;
+            }
+            values
+        }
+    }
+}
+
+/// The helper script for this machine: one `case` arm per allowed
+/// (setting, value), each running exactly the fragment a manual change runs.
+pub fn helper_script() -> String {
+    let ctx = ReadCtx::new();
+    let mut arms = String::new();
+    for t in catalog().iter().filter(|t| helper_eligible(t)) {
+        let Some(reading) = read(t, &ctx) else {
+            continue;
+        };
+        for value in helper_values(t, &reading) {
+            if shell_quote(&value).is_err() {
+                continue;
+            }
+            if let Ok(Plan::Root(fragment)) = plan(t, &value) {
+                arms.push_str(&format!("  '{} {}') run() {{ {fragment}\n  }} ;;\n", t.id, value));
+            }
+        }
+    }
+    format!(
+        "#!/bin/sh\n# Trace's trusted helper. Written by Trace; edits are overwritten.\n# It accepts only the settings and values listed below, and logs every call.\n# Remove it from Trace (Tweaks) or by deleting this file and\n# {HELPER_RULE}.\nPATH=/usr/sbin:/usr/bin:/sbin:/bin\ncheck=0\n[ \"$1\" = \"--check\" ] && {{ check=1; shift; }}\n[ $# -eq 2 ] || {{ echo 'usage: helper.sh [--check] <setting> <value>' >&2; exit 2; }}\ncase \"$1 $2\" in\n{arms}  *) echo \"not an allowed setting or value: $1 $2\" >&2; exit 3 ;;\nesac\n[ \"$check\" = 1 ] && {{ echo allowed; exit 0; }}\nout=$(run 2>&1); rc=$?\nprintf '%s uid=%s %s=%s rc=%s %s\\n' \"$(date '+%Y-%m-%d %H:%M:%S')\" \"${{PKEXEC_UID:-?}}\" \"$1\" \"$2\" \"$rc\" \"$(printf '%s' \"$out\" | tr '\\n' ' ' | cut -c1-160)\" >> {HELPER_LOG}\n[ \"$rc\" = 0 ] || printf '%s\\n' \"$out\" >&2\nexit $rc\n"
+    )
+}
+
+#[derive(Serialize)]
+pub struct HelperStatus {
+    pub installed: bool,
+    /// False when settings were added or changed since it was installed.
+    pub current: bool,
+    /// How many (setting, value) pairs it accepts.
+    pub allowed: usize,
+    pub log: Vec<String>,
+}
+
+pub fn helper_status() -> HelperStatus {
+    let on_disk = std::fs::read_to_string(HELPER_SCRIPT).ok();
+    let expected = helper_script();
+    let log = std::fs::read_to_string(HELPER_LOG)
+        .map(|t| t.lines().rev().take(60).map(String::from).collect())
+        .unwrap_or_default();
+    HelperStatus {
+        installed: on_disk.is_some() && std::path::Path::new(HELPER_RULE).exists(),
+        current: on_disk.as_deref() == Some(expected.as_str()),
+        allowed: expected.matches(") run() {").count(),
+        log,
+    }
+}
+
+/// Installs or removes the helper (one password prompt either way).
+pub fn set_helper(install: bool) -> Result<String, String> {
+    if !install {
+        run_privileged(&format!("rm -f {HELPER_SCRIPT} {HELPER_RULE}; rmdir /etc/trace 2>/dev/null; true"))?;
+        return Ok("Trusted helper removed — root-level changes ask for your password again".to_string());
+    }
+    let script = helper_script();
+    if script.contains("TRACE_HELPER_EOF") {
+        return Err("internal: unexpected content in the helper".to_string());
+    }
+    let rule = format!(
+        "// Written by Trace: lets the logged-in desktop user run Trace's helper,\n// and only that, without a password prompt.\npolkit.addRule(function(action, subject) {{\n    if (action.id == \"org.freedesktop.policykit.exec\" &&\n        action.lookup(\"program\") == \"{HELPER_SCRIPT}\" &&\n        subject.local && subject.active) {{\n        return polkit.Result.YES;\n    }}\n}});\n"
+    );
+    run_privileged(&format!(
+        "mkdir -p /etc/trace && cat > {HELPER_SCRIPT} <<'TRACE_HELPER_EOF'\n{script}TRACE_HELPER_EOF\nchown root:root {HELPER_SCRIPT} && chmod 755 {HELPER_SCRIPT} && sh -n {HELPER_SCRIPT} && cat > {HELPER_RULE} <<'TRACE_HELPER_EOF'\n{rule}TRACE_HELPER_EOF\nchmod 644 {HELPER_RULE} && touch {HELPER_LOG} && chmod 644 {HELPER_LOG}"
+    ))?;
+    Ok("Trusted helper installed — the listed settings can now change without a password, and every use is logged".to_string())
+}
+
+/// Runs one change through the helper. None when the helper isn't installed
+/// or doesn't cover this setting; Some(result) when it was used.
+fn via_helper(t: &Tweak, value: &str) -> Option<Result<(), String>> {
+    if !helper_eligible(t) || !std::path::Path::new(HELPER_SCRIPT).exists() || !std::path::Path::new(HELPER_RULE).exists() {
+        return None;
+    }
+    // Only use it if it knows this exact pair — an out-of-date helper is
+    // skipped rather than tripping its own refusal.
+    let known = std::fs::read_to_string(HELPER_SCRIPT).is_ok_and(|s| s.contains(&format!("  '{} {}') run()", t.id, value)));
+    if !known {
+        return None;
+    }
+    Some(run(Command::new("pkexec").args([HELPER_SCRIPT, t.id, value])).map(|_| ()))
+}
+
 // ---- storage ----
 
 pub fn init(db: &Db) {
@@ -1374,9 +1504,14 @@ pub fn apply_with(db: &Db, changes: &[Change], source: &str, keep: Option<bool>,
         };
         let index = items.len();
         let mut item = Item { tweak, old: reading.value.clone(), new: value.clone(), outcome: None };
+        // With the trusted helper installed, settings it covers never need a prompt.
+        let helped = if matches!(planned, Plan::Root(_)) { via_helper(tweak, &value) } else { None };
         match planned {
+            Plan::Root(_) if helped.is_some() => item.outcome = helped,
             Plan::Root(_) | Plan::DropIn(..) if !allow_root => {
-                item.outcome = Some(Err("Needs your password, so it was skipped in this automatic run".to_string()));
+                item.outcome = Some(Err(
+                    "Needs your password, so it was skipped in this automatic run (the trusted helper under Tweaks removes that limit)".to_string(),
+                ));
             }
             Plan::Root(fragment) => root.push((index, fragment)),
             Plan::DropIn(d, raw) => {
@@ -1750,6 +1885,34 @@ mod tests {
         release_keep_awake();
         std::thread::sleep(std::time::Duration::from_millis(600));
         assert!(!keep_awake_active() && !listed());
+    }
+
+    #[test]
+    fn helper_only_accepts_listed_settings_and_values() {
+        let script = helper_script();
+        let path = std::env::temp_dir().join(format!("trace-helper-test-{}.sh", std::process::id()));
+        std::fs::write(&path, &script).unwrap();
+        let sh = |args: &[&str]| Command::new("sh").arg(&path).args(args).output().unwrap();
+        assert!(Command::new("sh").arg("-n").arg(&path).status().unwrap().success(), "script must parse");
+        // `--check` proves the lookup without changing anything.
+        if script.contains("'vm.swappiness 100') run()") {
+            assert!(sh(&["--check", "vm.swappiness", "100"]).status.success());
+        }
+        for bad in [
+            vec!["--check", "vm.swappiness", "100; reboot"],
+            vec!["--check", "vm.swappiness", "9999"],
+            vec!["--check", "kernel.yama.ptrace_scope", "0"],
+            vec!["--check", "svc.ssh", "on"],
+            vec!["--check", "nonsense", "1"],
+            vec!["--check", "vm.swappiness"],
+        ] {
+            assert!(!sh(&bad).status.success(), "{bad:?} must be refused");
+        }
+        // Nothing expert, security-related or service-level is ever listed.
+        for forbidden in ["kernel.yama", "svc.", "vm.overcommit_memory", "journald.", "logind.", "kernel.sysrq"] {
+            assert!(!script.contains(&format!("  '{forbidden}")), "{forbidden} must not be in the helper");
+        }
+        std::fs::remove_file(path).ok();
     }
 
     #[test]

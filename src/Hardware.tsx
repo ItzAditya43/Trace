@@ -507,6 +507,200 @@ function Displays() {
   );
 }
 
+interface Ports {
+  charger_connected: boolean | null;
+  battery_watts: number | null;
+  usb: { port: string; name: string; speed: string; max_power_ma: number; driver: string; power_saving: boolean; can_wake: boolean }[];
+  video: { connector: string; connected: boolean; monitor: string }[];
+  network: { interface: string; kind: string; connected: boolean; speed_mbps: number | null }[];
+  audio: { device: string; port: string; state: string; active: boolean }[];
+}
+
+/** Everything plugged into the machine, socket by socket. */
+function PortsCard() {
+  const { data } = usePoll<Ports>("get_ports", undefined, 5000);
+  if (!data) return null;
+  const dot = (on: boolean) => <span className={on ? "status-ok" : "mem-muted"}>{on ? "●" : "○"}</span>;
+  return (
+    <section className="panel wide">
+      <h2>Ports &amp; Connections</h2>
+      <div className="sensor-grid">
+        <div>
+          <h3 className="sub-heading">Power</h3>
+          {data.charger_connected != null && (
+            <div className="meta-row">
+              <span>{dot(data.charger_connected)} Charger</span>
+              <span>{data.charger_connected ? "plugged in" : "not connected"}</span>
+            </div>
+          )}
+          {data.battery_watts != null && (
+            <div className="meta-row">
+              <span>Battery</span>
+              <span>
+                {Math.abs(data.battery_watts) < 0.05
+                  ? "idle (full or held at its limit)"
+                  : data.battery_watts > 0
+                  ? `charging at ${data.battery_watts.toFixed(1)} W`
+                  : `draining at ${(-data.battery_watts).toFixed(1)} W`}
+              </span>
+            </div>
+          )}
+          <h3 className="sub-heading">Video outputs</h3>
+          {data.video.map((v) => (
+            <div key={v.connector} className="meta-row">
+              <span>
+                {dot(v.connected)} {v.connector}
+              </span>
+              <span>{v.connected ? v.monitor || "connected" : "nothing connected"}</span>
+            </div>
+          ))}
+          <h3 className="sub-heading">Network sockets</h3>
+          {data.network.map((n) => (
+            <div key={n.interface} className="meta-row">
+              <span>
+                {dot(n.connected)} {n.kind} <span className="mem-muted">{n.interface}</span>
+              </span>
+              <span>
+                {n.connected ? (n.speed_mbps ? `linked at ${n.speed_mbps >= 1000 ? `${n.speed_mbps / 1000} Gbit/s` : `${n.speed_mbps} Mbit/s`}` : "connected") : "no link"}
+              </span>
+            </div>
+          ))}
+        </div>
+        <div>
+          <h3 className="sub-heading">Audio jacks</h3>
+          {data.audio.map((a, i) => (
+            <div key={i} className="meta-row">
+              <span>
+                {dot(a.state !== "not available")} {a.port} <span className="mem-muted">{a.device}</span>
+              </span>
+              <span>
+                {a.state}
+                {a.active ? " · in use" : ""}
+              </span>
+            </div>
+          ))}
+          {data.audio.length === 0 && <p className="diagnose-hint">No audio outputs reported.</p>}
+        </div>
+        <div className="usb-list">
+          <h3 className="sub-heading">USB devices ({data.usb.length})</h3>
+          {data.usb.map((u) => (
+            <div key={u.port} className="usb-row">
+              <span className="folder-name" title={`Port ${u.port} · driver ${u.driver || "none"}`}>
+                {u.name}
+              </span>
+              <span className="mem-muted">
+                {u.speed} · up to {u.max_power_ma} mA
+                {u.can_wake ? " · can wake the laptop" : ""}
+                {u.power_saving ? " · sleeps when idle" : ""}
+              </span>
+            </div>
+          ))}
+          {data.usb.length === 0 && <p className="diagnose-hint">Nothing is plugged in.</p>}
+        </div>
+      </div>
+      <p className="diagnose-hint">
+        A device on a slower link than you expect (a USB 3 drive showing "High speed") usually means
+        the cable or the port is USB 2. Blocking or allowing individual USB devices is under Control →
+        Display &amp; Devices.
+      </p>
+    </section>
+  );
+}
+
+interface ThermalRule {
+  id: string;
+  above_c: number;
+  tweak_id: string;
+  value: string;
+  enabled: boolean;
+}
+
+const THERMAL_ACTIONS: { label: string; tweak_id: string; value: string }[] = [
+  { label: "switch to the power-saver profile", tweak_id: "power.profile", value: "power-saver" },
+  { label: "run the fans at full speed", tweak_id: "fan.full_speed", value: "on" },
+  { label: "use the firmware's performance fan profile", tweak_id: "platform.profile", value: "performance" },
+  { label: "cap CPU speed at 70%", tweak_id: "cpu.max_freq", value: "70" },
+  { label: "cap CPU speed at 50%", tweak_id: "cpu.max_freq", value: "50" },
+  { label: "turn off turbo boost", tweak_id: "cpu.boost", value: "off" },
+];
+
+/** Steps to take as the machine heats up — the nearest thing to a fan curve here. */
+function ThermalRules() {
+  const config = usePoll<{ thermal: ThermalRule[] } & Record<string, unknown>>("get_automation");
+  const helper = usePoll<{ installed: boolean }>("get_helper_status");
+  const [above, setAbove] = useState("85");
+  const [action, setAction] = useState(0);
+  if (!config.data) return null;
+  const rules = config.data.thermal ?? [];
+  const save = async (thermal: ThermalRule[]) => {
+    await invoke("save_automation", { config: { ...config.data, thermal } });
+    config.reload();
+  };
+  const labelOf = (r: ThermalRule) =>
+    THERMAL_ACTIONS.find((a) => a.tweak_id === r.tweak_id && a.value === r.value)?.label ?? `${r.tweak_id} → ${r.value}`;
+
+  return (
+    <section className="panel">
+      <h2>Temperature Rules</h2>
+      {rules.length === 0 && (
+        <p className="diagnose-hint">None yet. Each rule acts when the hottest sensor stays above a temperature for 30 seconds, and undoes itself once it has cooled 10°C below it.</p>
+      )}
+      {[...rules]
+        .sort((a, b) => a.above_c - b.above_c)
+        .map((r) => (
+          <div key={r.id} className="control-row">
+            <label className={r.enabled ? "" : "mem-muted"}>
+              Above <strong>{r.above_c}°C</strong>: {labelOf(r)}
+            </label>
+            <button className="ctl-btn" onClick={() => save(rules.map((x) => (x.id === r.id ? { ...x, enabled: !x.enabled } : x)))}>
+              {r.enabled ? "Pause" : "Enable"}
+            </button>
+            <button className="ctl-btn ctl-danger" onClick={() => save(rules.filter((x) => x.id !== r.id))}>
+              Delete
+            </button>
+          </div>
+        ))}
+      <div className="control-row">
+        <label>Above (°C)</label>
+        <input className="port-input number-box" value={above} onChange={(e) => setAbove(e.target.value.replace(/\D/g, ""))} />
+        <select className="port-input" value={action} onChange={(e) => setAction(parseInt(e.target.value, 10))} aria-label="What to do">
+          {THERMAL_ACTIONS.map((a, i) => (
+            <option key={i} value={i}>
+              {a.label}
+            </option>
+          ))}
+        </select>
+        <button
+          className="ctl-btn ctl-primary"
+          disabled={!(parseInt(above, 10) >= 50 && parseInt(above, 10) <= 105)}
+          onClick={() =>
+            save([
+              ...rules,
+              {
+                id: Math.random().toString(36).slice(2, 10),
+                above_c: parseInt(above, 10),
+                tweak_id: THERMAL_ACTIONS[action].tweak_id,
+                value: THERMAL_ACTIONS[action].value,
+                enabled: true,
+              },
+            ])
+          }
+        >
+          Add rule
+        </button>
+      </div>
+      <p className="diagnose-hint">
+        This laptop's firmware only lets Linux choose between its own fan profiles or full speed —
+        there is no way to set an exact fan speed — so a few rules at rising temperatures are what a
+        fan curve amounts to here.{" "}
+        {helper.data?.installed
+          ? "The trusted helper is installed, so every action above can run by itself."
+          : "Only the power-saver rule can run by itself. The others need root: install the trusted helper on the Tweaks page, or they are skipped and logged."}
+      </p>
+    </section>
+  );
+}
+
 export default function Hardware() {
   const { data } = usePoll<HardwareView>("get_hardware", undefined, 2000);
   if (!data) return <p className="loading">Reading the hardware…</p>;
@@ -514,7 +708,9 @@ export default function Hardware() {
   return (
     <>
       <Sensors sensors={data.sensors} />
+      <PortsCard />
       <FanControl />
+      <ThermalRules />
       <CpuPowerControl />
       <Graphics gpus={data.gpus} />
       <Brightness builtin={data.backlight_percent} />
