@@ -11,24 +11,33 @@ Built with Tauri (Rust) + React/TypeScript.
 
 ## Features
 
-- **Overview** — health score with the top issues, CPU (per-core), RAM, swap, stall time, GPU (NVIDIA/AMD), temps, network, battery, disks, top processes
-- **Memory** — accounts for every byte of RAM by purpose (apps, file cache, kernel, graphics, compressed swap), per-app RAM + swap with shared pages split fairly, per-app growth over time, where swapped-out data lives, and restart / freeze / quit / cap actions on each app
+- **Overview** — health score with the top issues, live tiles, CPU (per-core), RAM, swap, stall time, GPU, temps, network, battery, disks, top processes
+- **Memory** — accounts for every byte of RAM by purpose, per-app RAM + swap with shared pages split fairly, growth over time, and per-app actions: restart, freeze, quit, and CPU / RAM limits (no password needed)
 - **Activity** — which apps are using the disk and the network right now, and which wake the CPU most
-- **Health** — 0–100 score with plain-language issues, reboot-needed detection (replaced kernel, NVIDIA driver mismatch, apps running outdated binaries), failed services, battery wear, boot-time trend, drive SMART health, out-of-memory kills and recent journal errors
-- **History** — hover-to-inspect charts for CPU, RAM, swap, GPU, memory/disk stall time and each disk over 1 hour to 30 days, with warnings marked on the timeline, plus a disk usage explorer
-- **Logs** — a daily / weekly / monthly / yearly logbook: time recorded, screen time per app (focused window), apps that ran in the background, average and peak CPU/RAM, crashes and out-of-memory kills copied from the system journal, warnings, control actions and boots; any period can be exported as JSON
-- **Investigate** — "What's slowing me down?" diagnosis from correlated event history, plus port → process lookup
-- **Projects** — scans a folder for each project's branch, uncommitted and unpushed work, last commit, languages, dependencies, TODOs and size, with filters and one-click open in editor, terminal or file manager
+- **Health** — 0–100 score with plain-language issues, reboot-needed detection, failed services, battery wear, boot-time trend, drive SMART health, out-of-memory kills and recent journal errors
+- **History** — hover-to-inspect charts over 1 hour to 30 days with warnings marked on the timeline, plus a disk usage explorer
+- **Logs** — a daily / weekly / monthly / yearly logbook: screen time per app, apps that ran, CPU/RAM/temperature, battery drain and cycles, network data used, crashes, sleep / lid / login times, package changes, warnings, alerts sent and control actions; any period exports as JSON
+- **Investigate** — "What's slowing me down?" diagnosis, plus port → process lookup
+- **Projects** — every project's branch, uncommitted and unpushed work, size and TODOs, with one-click open
+- **Tweaks** — a curated catalogue of about 200 system settings (around 190 apply to a typical laptop), each with a plain explanation:
+  - *what* — power and CPU, laptop and battery, memory and swap, disks, network, desktop effects and windows (Hyprland, GTK), mouse / keyboard / touchpad, audio, privacy and security, background services, developer limits, clock and logs
+  - *how* — settings that need root are collected and applied with **one** password prompt; every change is read back and reported honestly if the system ignored it; anything can be undone or reset to the value Trace first saw; chosen settings can be kept across reboots
+  - *presets* — Battery saver, Balanced, Performance, Gaming, Quiet and cool, zram tuning, Lightweight desktop, Security hardening, Developer workstation, plus your own
+  - *suggestions* — a short list worked out from this machine's own state (for example "you run zram and zswap together")
+  - deliberately excluded: anything that can't be undone or could stop the machine booting (bootloader, kernel command line, disk layout, sudo rules, one-way kernel lock-downs)
 - **Control**, in sections:
   - *Apps & Processes* — search, freeze/kill/limit processes, windows and workspaces, namespaces
-  - *Power & Memory* — lock/suspend/log out/reboot/shut down, power profile, CPU governor, firmware fan/thermal profile, per-core on/off, fans, swappiness, drop caches, compact memory, empty swap, brightness/volume, GPU tuning
-  - *Network* — VPNs (connect, rename, auto-connect, delete; add from an OpenVPN/WireGuard file or straight from the VPN Gate public server list), Wi-Fi and Bluetooth, firewalld ports, bandwidth limits, per-app network blocking
-  - *Display & Devices* — resolution, refresh rate, scale and night light (Hyprland), audio output/input selection, USB authorization, clipboard history
-  - *Services* — systemd units, Docker containers, autostart apps, startup impact
-  - *Automation* — undoable/dry-runnable profiles with a builder, memory rules ("if an app exceeds N GB, notify/freeze/restart/quit"), profiles scheduled by time or app launch, desktop alerts, and a full audit log
-  - *Packages & Cleanup* — pending updates, package cache cleanup and orphan removal (pacman; updates and cache on apt), plus trash, journal, crash-dump and thumbnail cleanup
+  - *Power & Memory* — lock/suspend/log out/reboot/shut down, power profile, governor, cores, fans, swap tuning, brightness/volume, GPU tuning
+  - *Network* — VPNs (connect, rename, auto-connect, delete; add from a file or from the VPN Gate public list; connect to the fastest server in a country; kill switch; only-some-apps-through-the-VPN; public address check), Wi-Fi and Bluetooth, firewalld ports, bandwidth limits, per-app network blocking
+  - *Display & Devices* — resolution, refresh rate, scale and night light (Hyprland), audio output/input, USB authorization, clipboard history
+  - *Services* — systemd units and Docker containers with their logs and live stats, autostart apps, startup impact
+  - *Automation* — profiles (with a builder, import, and "apply settings preset" steps), memory rules, schedules by time or app launch, alerts and their history, start at login, run in the tray, and a full audit log
+  - *Packages & Cleanup* — pending updates, package cache and orphan cleanup, trash / journal / crash-dump / thumbnail cleanup
+- **Search** — Ctrl+K searches settings, pages, running programs, services and the logbook
 
-Actions that need root (governor, swap, fans, SMART, packages) go through polkit (`pkexec`), so the desktop's own password prompt appears each time; nothing runs as root otherwise. Rules, schedules, alerts and the logbook only run while Trace is open. Raw 10-second samples are kept for 90 days; the logbook's hourly and daily records are kept indefinitely.
+Trace keeps running in the tray when its window is closed (so the logbook, rules and alerts keep working), and a second launch brings the existing window back instead of starting twice.
+
+Actions that need root go through polkit (`pkexec`), so the desktop's own password prompt appears; nothing runs as root otherwise. Rules, schedules, alerts and the logbook only run while Trace is running. Raw 10-second samples are kept for 90 days; the logbook's hourly and daily records are kept indefinitely.
 
 ## Updates
 

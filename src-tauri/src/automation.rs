@@ -40,6 +40,9 @@ pub struct Schedule {
 pub struct Config {
     #[serde(default = "yes")]
     pub alerts_enabled: bool,
+    /// Closing the window hides Trace instead of quitting it.
+    #[serde(default = "yes")]
+    pub close_to_tray: bool,
     #[serde(default)]
     pub rules: Vec<Rule>,
     #[serde(default)]
@@ -54,6 +57,7 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             alerts_enabled: true,
+            close_to_tray: true,
             rules: Vec::new(),
             schedules: Vec::new(),
         }
@@ -214,6 +218,7 @@ mod tests {
     fn config(include_swap: bool) -> Config {
         Config {
             alerts_enabled: true,
+            close_to_tray: true,
             rules: vec![Rule {
                 id: "r1".to_string(),
                 app: "trace-test-app-that-does-not-exist".to_string(),

@@ -501,28 +501,92 @@ pub fn app_action(name: &str, action: &str) -> ActionResult {
     ))
 }
 
-/// Caps an app's memory through its systemd scope. Refuses when the app
-/// isn't in a scope of its own — the cap would then land on the whole
-/// session and could take the desktop down with it.
-pub fn limit_app_memory(name: &str, mb: u64) -> ActionResult {
-    let Some(pid) = pids_of_app(name).first().copied() else {
-        return err(format!("{name} is no longer running"));
-    };
+/// The systemd unit (scope or service) an app runs in, provided it has one
+/// of its own. Limits are refused otherwise: on the shared session scope
+/// they would land on the whole desktop.
+fn app_unit(name: &str) -> Result<String, String> {
+    let pid = pids_of_app(name).first().copied().ok_or(format!("{name} is no longer running"))?;
     let cgroup = fs::read_to_string(format!("/proc/{pid}/cgroup")).unwrap_or_default();
     let leaf = cgroup.trim().rsplit('/').next().unwrap_or("").to_string();
-    if !(leaf.starts_with("app-") || cgroup.contains("/app.slice/")) || leaf.starts_with("session-") {
-        return err(format!(
-            "{name} shares its control group ({leaf}) with the rest of your session, so a cap would hit everything in it"
+    let own = (leaf.ends_with(".scope") || leaf.ends_with(".service"))
+        && cgroup.contains("/user@")
+        && !leaf.starts_with("session-")
+        && !leaf.starts_with("user@");
+    if !own {
+        return Err(format!(
+            "{name} shares its control group ({leaf}) with the rest of your session, so a limit would hit everything in it"
         ));
     }
-    let r = crate::control_process::set_memory_limit(pid, mb);
-    ActionResult {
-        ok: r.ok,
-        message: if r.ok {
-            format!("Capped {name} at {mb} MB — it will be slowed or killed if it goes over")
-        } else {
-            r.message
-        },
+    // systemd escapes characters in unit names (\x2d for "-"); it wants
+    // them back exactly as they appear in the cgroup path.
+    Ok(leaf)
+}
+
+#[derive(Serialize)]
+pub struct AppLimits {
+    /// Percent of one core, or None when unlimited.
+    pub cpu_percent: Option<u32>,
+    pub memory_mb: Option<u64>,
+    /// Why limits can't be applied to this app, if they can't.
+    pub unavailable: Option<String>,
+}
+
+pub fn app_limits(name: &str) -> AppLimits {
+    let unit = match app_unit(name) {
+        Ok(unit) => unit,
+        Err(reason) => return AppLimits { cpu_percent: None, memory_mb: None, unavailable: Some(reason) },
+    };
+    let out = crate::sys_util::run_lossy(std::process::Command::new("systemctl").args([
+        "--user", "show", "-p", "CPUQuotaPerSecUSec", "-p", "MemoryHigh", &unit,
+    ]));
+    let field = |key: &str| out.lines().find_map(|l| l.strip_prefix(key)?.strip_prefix('=')).unwrap_or("");
+    // "500ms" of CPU time per second = 50% of a core; "1.5s" = 150%.
+    let quota = field("CPUQuotaPerSecUSec");
+    let cpu_percent = if let Some(ms) = quota.strip_suffix("ms") {
+        ms.parse::<f64>().ok().map(|v| (v / 10.0).round() as u32)
+    } else if let Some(sec) = quota.strip_suffix('s') {
+        sec.parse::<f64>().ok().map(|v| (v * 100.0).round() as u32)
+    } else {
+        None
+    };
+    AppLimits {
+        cpu_percent,
+        memory_mb: field("MemoryHigh").parse::<u64>().ok().map(|bytes| bytes / 1024 / 1024),
+        unavailable: None,
+    }
+}
+
+/// Limits an app's CPU (percent of one core; 200 = two cores) and/or its
+/// memory, through systemd. Needs no password, lasts until the app closes,
+/// and passing None for both removes the limits.
+pub fn set_app_limits(name: &str, cpu_percent: Option<u32>, memory_mb: Option<u64>) -> ActionResult {
+    let unit = match app_unit(name) {
+        Ok(unit) => unit,
+        Err(reason) => return err(reason),
+    };
+    let cpu = match cpu_percent {
+        Some(p) if (5..=6400).contains(&p) => format!("CPUQuota={p}%"),
+        Some(_) => return err("CPU limit must be between 5% and 6400%"),
+        None => "CPUQuota=".to_string(),
+    };
+    let memory = match memory_mb {
+        Some(mb) if mb >= 64 => format!("MemoryHigh={mb}M"),
+        Some(_) => return err("Memory limit must be at least 64 MB"),
+        None => "MemoryHigh=infinity".to_string(),
+    };
+    match crate::sys_util::run(
+        std::process::Command::new("systemctl").args(["--user", "set-property", "--runtime", &unit, &cpu, &memory]),
+    ) {
+        Ok(_) => ok(match (cpu_percent, memory_mb) {
+            (None, None) => format!("Removed the limits on {name}"),
+            (cpu, mem) => format!(
+                "{name} limited to {}{}{} until it closes",
+                cpu.map(|p| format!("{p}% CPU")).unwrap_or_default(),
+                if cpu.is_some() && mem.is_some() { " and " } else { "" },
+                mem.map(|m| format!("{m} MB of RAM (it is pushed into swap above that)")).unwrap_or_default(),
+            ),
+        }),
+        Err(e) => err(format!("systemd refused the limit: {e}")),
     }
 }
 
@@ -571,6 +635,49 @@ mod tests {
         assert!(pids_of_app(&name).is_empty());
         assert!(!app_action(&name, "kill").ok, "nothing left to act on");
         assert!(!app_action("systemd", "kill").ok, "protected apps are refused");
+        fs::remove_file(exe).ok();
+    }
+
+    /// Limits a throwaway program started in its own systemd scope, checks
+    /// the kernel sees the limit, and removes it again. No root involved.
+    #[test]
+    fn app_limits_reach_the_kernel_through_systemd() {
+        let name = format!("trace-test-limited-{}", std::process::id());
+        let exe = std::env::temp_dir().join(&name);
+        assert!(std::process::Command::new("cp").arg("/usr/bin/sleep").arg(&exe).status().unwrap().success());
+        let unit = format!("{name}.scope");
+        let started = std::process::Command::new("systemd-run")
+            .args(["--user", "--scope", "--quiet", "--collect", &format!("--unit={unit}")])
+            .arg(&exe)
+            .arg("300")
+            .spawn();
+        let Ok(mut child) = started else {
+            return; // no systemd user session here
+        };
+        std::thread::sleep(std::time::Duration::from_millis(700));
+        if pids_of_app(&name).is_empty() {
+            child.kill().ok();
+            return;
+        }
+
+        let r = set_app_limits(&name, Some(50), Some(256));
+        assert!(r.ok, "{}", r.message);
+        let limits = app_limits(&name);
+        assert_eq!((limits.cpu_percent, limits.memory_mb), (Some(50), Some(256)));
+        let cgroup = crate::sys_util::run_lossy(
+            std::process::Command::new("systemctl").args(["--user", "show", "-p", "ControlGroup", "--value", &unit]),
+        );
+        let read = |file: &str| fs::read_to_string(format!("/sys/fs/cgroup{}/{file}", cgroup.trim())).unwrap_or_default();
+        assert_eq!(read("cpu.max").trim(), "50000 100000");
+        assert_eq!(read("memory.high").trim(), (256u64 * 1024 * 1024).to_string());
+
+        assert!(set_app_limits(&name, None, None).ok);
+        let limits = app_limits(&name);
+        assert_eq!((limits.cpu_percent, limits.memory_mb), (None, None));
+        assert_eq!(read("memory.high").trim(), "max");
+
+        app_action(&name, "force_kill");
+        child.wait().ok();
         fs::remove_file(exe).ok();
     }
 

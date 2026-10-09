@@ -1,6 +1,5 @@
 use serde::Serialize;
 use std::fs;
-use std::process::Command;
 
 #[derive(Serialize)]
 pub struct ActionResult {
@@ -16,13 +15,6 @@ fn err(msg: impl Into<String>) -> ActionResult {
     ActionResult { ok: false, message: msg.into() }
 }
 
-fn run(cmd: &mut Command) -> Result<String, String> {
-    let out = cmd.output().map_err(|e| e.to_string())?;
-    if !out.status.success() {
-        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
-}
 
 // ---- per-process connection list ----
 
@@ -143,27 +135,43 @@ pub fn list_connections(sys: &sysinfo::System, only_pid: Option<u32>) -> Vec<Con
 // which is a much bigger, riskier undertaking — see nft-based process
 // blocking below for a coarser per-process control that IS safe to ship.
 
-pub fn limit_interface(iface: &str, rate_kbit: u32) -> ActionResult {
-    // Clear any existing shaping first so limits don't stack.
-    run(Command::new("tc").args(["qdisc", "del", "dev", iface, "root"])).ok();
-    match run(Command::new("tc").args([
-        "qdisc", "add", "dev", iface, "root", "tbf",
-        "rate", &format!("{rate_kbit}kbit"),
-        "burst", "32kbit",
-        "latency", "400ms",
-    ])) {
-        Ok(_) => ok(format!("Limited {iface} to {rate_kbit} kbit/s (tc tbf)")),
-        Err(e) => err(format!(
-            "Failed to shape {iface}: {e} (tc qdisc changes need CAP_NET_ADMIN — usually root)"
-        )),
+fn known_interface(iface: &str) -> bool {
+    crate::sys_util::is_safe_token(iface)
+        && !iface.contains('/')
+        && std::path::Path::new(&format!("/sys/class/net/{iface}")).exists()
+}
+
+fn privileged(script: &str, success: String, failure: &str) -> ActionResult {
+    match crate::sys_util::run_privileged(script) {
+        Ok(_) => ok(success),
+        Err(e) => err(format!("{failure}: {e}")),
     }
 }
 
-pub fn clear_interface_limit(iface: &str) -> ActionResult {
-    match run(Command::new("tc").args(["qdisc", "del", "dev", iface, "root"])) {
-        Ok(_) => ok(format!("Removed bandwidth limit on {iface}")),
-        Err(e) => err(format!("Failed to clear shaping on {iface}: {e}")),
+pub fn limit_interface(iface: &str, rate_kbit: u32) -> ActionResult {
+    if !known_interface(iface) {
+        return err(format!("No network interface called {iface}"));
     }
+    let rate = rate_kbit.clamp(8, 10_000_000);
+    // Clear any existing shaping first so limits don't stack.
+    privileged(
+        &format!(
+            "tc qdisc del dev {iface} root 2>/dev/null; tc qdisc add dev {iface} root tbf rate {rate}kbit burst 32kbit latency 400ms"
+        ),
+        format!("Limited {iface} to {rate} kbit/s until reboot or until cleared"),
+        &format!("Failed to shape {iface}"),
+    )
+}
+
+pub fn clear_interface_limit(iface: &str) -> ActionResult {
+    if !known_interface(iface) {
+        return err(format!("No network interface called {iface}"));
+    }
+    privileged(
+        &format!("tc qdisc del dev {iface} root"),
+        format!("Removed bandwidth limit on {iface}"),
+        &format!("Failed to clear shaping on {iface}"),
+    )
 }
 
 pub fn list_interfaces() -> Vec<String> {
@@ -190,45 +198,36 @@ fn process_cgroup_path(pid: u32) -> Result<String, String> {
     Err("Process is not on the unified (v2) cgroup hierarchy".to_string())
 }
 
-fn nft_ensure_table_and_chain() -> Result<(), String> {
-    run(Command::new("nft").args(["add", "table", "inet", "trace_block"]))?;
-    run(Command::new("nft").args([
-        "add", "chain", "inet", "trace_block", "output",
-        "{", "type", "filter", "hook", "output", "priority", "0", ";", "}",
-    ]))?;
-    Ok(())
-}
-
 /// Blocks outbound network traffic from every process in `pid`'s cgroup by
 /// matching the cgroup's path. This is coarse — it affects the whole
 /// cgroup, not just the one PID, which for most desktop apps (one cgroup
 /// per app under systemd --user) is exactly the process tree you'd expect
-/// to block. The exact `nft` command run is included in the result so you
-/// can verify it with `nft list ruleset` yourself.
+/// to block. Lasts until reboot or "Unblock All".
 pub fn block_process_network(pid: u32) -> ActionResult {
     let path = match process_cgroup_path(pid) {
-        Ok(p) => p,
+        Ok(p) => p.trim_start_matches('/').to_string(),
         Err(e) => return err(e),
     };
+    // The path goes inside a quoted nft string in a quoted heredoc, so the
+    // only characters that could break out are a quote or a line break.
+    if path.is_empty() || path.contains(['"', '\n', '\r']) {
+        return err("This process's control group can't be matched safely");
+    }
     let level = path.split('/').filter(|s| !s.is_empty()).count();
-    if let Err(e) = nft_ensure_table_and_chain() {
-        return err(format!("Failed to prepare nft table: {e} (needs root/CAP_NET_ADMIN)"));
-    }
-    let rule = format!("socket cgroupv2 level {level} \"{path}\" drop");
-    match run(Command::new("nft").args([
-        "add", "rule", "inet", "trace_block", "output",
-        "socket", "cgroupv2", "level", &level.to_string(), &path, "drop",
-    ])) {
-        Ok(_) => ok(format!(
-            "Blocked outbound traffic for cgroup {path} (nft rule: {rule})"
-        )),
-        Err(e) => err(format!("Failed to add nft rule: {e} (needs root/CAP_NET_ADMIN)")),
-    }
+    let rules = format!(
+        "table inet trace_block {{\n  chain output {{\n    type filter hook output priority 0;\n  }}\n}}\nadd rule inet trace_block output socket cgroupv2 level {level} \"{path}\" drop\n"
+    );
+    privileged(
+        &format!("nft -f - <<'TRACE_EOF'\n{rules}TRACE_EOF\n"),
+        format!("Blocked outbound traffic for {path}"),
+        "Failed to add the block",
+    )
 }
 
 pub fn unblock_all_network() -> ActionResult {
-    match run(Command::new("nft").args(["delete", "table", "inet", "trace_block"])) {
-        Ok(_) => ok("Removed all Trace network blocks"),
-        Err(e) => err(format!("Failed to clear nft table: {e}")),
-    }
+    privileged(
+        "nft delete table inet trace_block",
+        "Removed all Trace network blocks".to_string(),
+        "Nothing to remove, or it failed",
+    )
 }

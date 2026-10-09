@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import History from "./History";
 import Diagnose from "./Diagnose";
@@ -8,6 +8,9 @@ import MemoryMap from "./MemoryMap";
 import Activity from "./Activity";
 import Health, { HealthScore } from "./Health";
 import Logs from "./Logs";
+import Tweaks from "./Tweaks";
+import SearchPalette from "./SearchPalette";
+import { NavContext, NavTarget } from "./nav";
 import { Tile } from "./ui";
 import UpdateBanner from "./UpdateBanner";
 import "./App.css";
@@ -87,6 +90,7 @@ const PAGES = [
   { key: "logs", label: "Logs", hint: "Daily, weekly, monthly and yearly record" },
   { key: "diagnose", label: "Investigate", hint: "What is slowing me down?" },
   { key: "projects", label: "Projects", hint: "Git and dependency status" },
+  { key: "tweaks", label: "Tweaks", hint: "Every system setting worth changing, with presets" },
   { key: "control", label: "Control", hint: "Act on the machine" },
 ] as const;
 
@@ -140,7 +144,27 @@ function MiniBar({ label, percent }: { label: string; percent: number }) {
 
 function App() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
-  const [tab, setTab] = useState<PageKey>("live");
+  const [target, setTarget] = useState<NavTarget>({ page: "live", nonce: 0 });
+  const [searching, setSearching] = useState(false);
+  const tab = (PAGES.some((p) => p.key === target.page) ? target.page : "live") as PageKey;
+  const go = useCallback(
+    (to: Omit<NavTarget, "nonce">) => setTarget((t) => ({ ...to, nonce: t.nonce + 1 })),
+    []
+  );
+  const setTab = (page: PageKey) => go({ page });
+
+  // Ctrl+K (or /) opens search from anywhere.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const typing = ["INPUT", "TEXTAREA", "SELECT"].includes((e.target as HTMLElement)?.tagName);
+      if ((e.ctrlKey && e.key.toLowerCase() === "k") || (e.key === "/" && !typing)) {
+        e.preventDefault();
+        setSearching(true);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -195,7 +219,9 @@ function App() {
     : 0;
 
   return (
+    <NavContext.Provider value={{ target, go }}>
     <main className="container shell">
+      {searching && <SearchPalette onClose={() => setSearching(false)} />}
       <header className="header">
         <h1>Trace</h1>
         <span className="subtitle">
@@ -206,6 +232,10 @@ function App() {
       </header>
 
       <nav className="side-nav">
+        <button className="nav-search" onClick={() => setSearching(true)} title="Search everything (Ctrl+K)">
+          <span>Search…</span>
+          <kbd>Ctrl K</kbd>
+        </button>
         {PAGES.map((p) => (
           <button
             key={p.key}
@@ -242,6 +272,7 @@ function App() {
       <div className="page-body">
       {tab === "activity" && <Activity />}
       {tab === "logs" && <Logs />}
+      {tab === "tweaks" && <Tweaks />}
       {tab === "health" && <Health />}
       {tab === "memory" && <MemoryMap />}
       {tab === "history" && <History />}
@@ -495,6 +526,7 @@ function App() {
       </div>
       </div>
     </main>
+    </NavContext.Provider>
   );
 }
 

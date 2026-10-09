@@ -1,4 +1,7 @@
-import { useEffect, useState } from "react";
+import { useContext, useEffect, useState } from "react";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { NavContext } from "./nav";
+import AppSettings from "./AppSettings";
 import { invoke } from "@tauri-apps/api/core";
 import Automation from "./Automation";
 import Packages from "./Packages";
@@ -49,7 +52,8 @@ type ProfileAction =
   | { type: "FreezeApp"; app: string }
   | { type: "ResumeApp"; app: string }
   | { type: "QuitApp"; app: string }
-  | { type: "SetPowerProfile"; profile: string };
+  | { type: "SetPowerProfile"; profile: string }
+  | { type: "ApplyPreset"; preset: string };
 
 interface Profile {
   name: string;
@@ -92,7 +96,15 @@ function ProcessControl() {
   const [ioLevel, setIoLevel] = useState("4");
   const [result, setResult] = useState<ActionResult | null>(null);
 
+  const { target } = useContext(NavContext);
   const [search, setSearch] = useState("");
+
+  // Arriving from global search with a program name.
+  useEffect(() => {
+    if (target.page === "control" && target.section === "apps" && target.query) {
+      setSearch(target.query);
+    }
+  }, [target]);
 
   useEffect(() => {
     let cancelled = false;
@@ -273,9 +285,30 @@ function ProcessControl() {
 }
 
 function ServiceControl() {
+  const { target } = useContext(NavContext);
   const [units, setUnits] = useState<UnitInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ActionResult | null>(null);
+  const [filter, setFilter] = useState("");
+  const [logsFor, setLogsFor] = useState<string | null>(null);
+  const [logs, setLogs] = useState<string[] | null>(null);
+
+  useEffect(() => {
+    if (target.page === "control" && target.section === "services" && target.query) {
+      setFilter(target.query);
+    }
+  }, [target]);
+
+  async function showLogs(name: string) {
+    if (logsFor === name) return setLogsFor(null);
+    setLogsFor(name);
+    setLogs(null);
+    try {
+      setLogs(await invoke<string[]>("get_service_logs", { name, user: false }));
+    } catch (e) {
+      setLogs([String(e)]);
+    }
+  }
 
   async function refresh() {
     setLoading(true);
@@ -308,12 +341,23 @@ function ServiceControl() {
   return (
     <section className="panel">
       <h2>systemd Services ({units.length})</h2>
-      <button className="ctl-btn" onClick={refresh} disabled={loading}>
-        {loading ? "Refreshing…" : "Refresh"}
-      </button>
+      <div className="proc-picker">
+        <input
+          className="port-input"
+          placeholder="Filter services…"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+        />
+        <button className="ctl-btn" onClick={refresh} disabled={loading} style={{ flex: "none" }}>
+          {loading ? "Refreshing…" : "Refresh"}
+        </button>
+      </div>
       <div className="unit-list">
-        {units.map((u) => (
-          <div key={u.name} className="unit-row">
+        {units
+          .filter((u) => `${u.name} ${u.description}`.toLowerCase().includes(filter.toLowerCase()))
+          .map((u) => (
+          <div key={u.name}>
+          <div className="unit-row">
             <span className="unit-name" title={`${u.name} — ${u.description}`}>
               {u.name}
             </span>
@@ -335,7 +379,16 @@ function ServiceControl() {
               <button className="ctl-btn-sm" onClick={() => act("restart_service", u.name)}>
                 Restart
               </button>
+              <button className="ctl-btn-sm" onClick={() => showLogs(u.name)}>
+                {logsFor === u.name ? "Hide log" : "Log"}
+              </button>
             </div>
+          </div>
+          {logsFor === u.name && (
+            <pre className="log-view">
+              {logs === null ? "Reading the journal…" : logs.length === 0 ? "No log lines for this unit." : logs.join("\n")}
+            </pre>
+          )}
           </div>
         ))}
       </div>
@@ -347,6 +400,27 @@ function ServiceControl() {
 function DockerControl() {
   const [containers, setContainers] = useState<ContainerInfo[] | null>(null);
   const [result, setResult] = useState<ActionResult | null>(null);
+  const [detail, setDetail] = useState<{ id: string; kind: "logs" | "stats"; text: string } | null>(null);
+
+  async function show(id: string, kind: "logs" | "stats") {
+    if (detail?.id === id && detail.kind === kind) return setDetail(null);
+    setDetail({ id, kind, text: kind === "logs" ? "Reading the container's output…" : "Measuring…" });
+    try {
+      if (kind === "logs") {
+        const text = await invoke<string>("get_container_logs", { id });
+        setDetail({ id, kind, text: text.trim() || "This container hasn't printed anything." });
+      } else {
+        const s = await invoke<Record<string, string>>("get_container_stats", { id });
+        setDetail({
+          id,
+          kind,
+          text: `CPU        ${s.cpu}\nMemory     ${s.memory} (${s.memory_percent})\nNetwork    ${s.network}  (received / sent)\nDisk       ${s.disk}  (read / written)\nProcesses  ${s.processes}`,
+        });
+      }
+    } catch (e) {
+      setDetail({ id, kind, text: String(e) });
+    }
+  }
 
   async function refresh() {
     try {
@@ -384,7 +458,8 @@ function DockerControl() {
       ) : (
         <div className="unit-list">
           {containers.map((c) => (
-            <div key={c.id} className="unit-row">
+            <div key={c.id}>
+            <div className="unit-row">
               <span className="unit-name" title={`${c.name || c.id} — ${c.image}`}>
                 {c.name || c.id}
               </span>
@@ -401,7 +476,15 @@ function DockerControl() {
                 <button className="ctl-btn-sm" onClick={() => act("restart_container", c.id)}>
                   Restart
                 </button>
+                <button className="ctl-btn-sm" onClick={() => show(c.id, "logs")}>
+                  Log
+                </button>
+                <button className="ctl-btn-sm" onClick={() => show(c.id, "stats")}>
+                  Stats
+                </button>
               </div>
+            </div>
+            {detail?.id === c.id && <pre className="log-view">{detail.text}</pre>}
             </div>
           ))}
         </div>
@@ -1010,6 +1093,33 @@ function ProfilesControl() {
         Ordered lists of actions you can dry-run, apply and undo. Build one
         below, or hand-edit the TOML files under your Trace data directory.
       </p>
+      <div className="control-actions">
+        <button
+          className="ctl-btn"
+          onClick={async () => {
+            const path = await openDialog({
+              multiple: false,
+              filters: [{ name: "Trace profile", extensions: ["toml"] }],
+            });
+            if (typeof path !== "string") return;
+            const r = await invoke<ActionResult>("import_profile_file", { path });
+            setOutcomes([{ description: "Import", ok: r.ok, message: r.message }]);
+            setActiveProfile(null);
+            refresh();
+          }}
+        >
+          Import a profile file…
+        </button>
+      </div>
+      {activeProfile === null && outcomes && (
+        <div className="outcome-list">
+          {outcomes.map((o, i) => (
+            <div key={i} className={o.ok ? "status-ok" : "status-fail"}>
+              {o.ok ? "✓" : "✗"} {o.message}
+            </div>
+          ))}
+        </div>
+      )}
       {profiles.length === 0 && (
         <p className="diagnose-hint">
           No profiles yet — build one below.
@@ -1082,6 +1192,8 @@ function describeAction(a: ProfileAction): string {
       return `Quit ${a.app}`;
     case "SetPowerProfile":
       return `Switch power profile to ${a.profile}`;
+    case "ApplyPreset":
+      return `Apply the “${a.preset}” settings preset`;
   }
 }
 
@@ -1131,7 +1243,15 @@ const SECTIONS = [
 type SectionKey = (typeof SECTIONS)[number]["key"];
 
 export default function Control() {
+  const { target } = useContext(NavContext);
   const [section, setSection] = useState<SectionKey>("apps");
+
+  // Global search and other pages can land on a specific section.
+  useEffect(() => {
+    if (target.page === "control" && SECTIONS.some((s) => s.key === target.section)) {
+      setSection(target.section as SectionKey);
+    }
+  }, [target]);
   // Bumped when the builder saves a profile, so the list above it reloads.
   const [profilesVersion, setProfilesVersion] = useState(0);
 
@@ -1194,6 +1314,7 @@ export default function Control() {
         <>
           <ProfilesControl key={profilesVersion} />
           <Automation onProfilesChanged={() => setProfilesVersion((v) => v + 1)} />
+          <AppSettings />
           <ActionLog />
         </>
       )}

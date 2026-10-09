@@ -81,11 +81,34 @@ pub fn is_safe_token(s: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '@' | ':' | '/'))
 }
 
+pub struct SentNotification {
+    pub ts: i64,
+    pub title: String,
+    pub body: String,
+    pub critical: bool,
+}
+
+/// Notifications sent but not yet written to the logbook.
+static SENT: std::sync::Mutex<Vec<SentNotification>> = std::sync::Mutex::new(Vec::new());
+
+pub fn take_notifications() -> Vec<SentNotification> {
+    std::mem::take(&mut *SENT.lock().unwrap())
+}
+
 pub fn notify(title: &str, body: &str, critical: bool) {
     // Unit tests exercise rules and alerts; they shouldn't pop real notifications.
     if cfg!(test) {
         return;
     }
+    SENT.lock().unwrap().push(SentNotification {
+        ts: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0),
+        title: title.to_string(),
+        body: body.to_string(),
+        critical,
+    });
     Command::new("notify-send")
         .args([
             "--app-name=Trace",

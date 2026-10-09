@@ -1,5 +1,6 @@
 mod activity;
 mod automation;
+mod autostart;
 mod connectivity;
 mod control_process;
 mod db;
@@ -7,9 +8,11 @@ mod desktop;
 mod docker_control;
 mod gpu_control;
 mod health;
+mod hypr;
 mod logbook;
 mod memory_map;
 mod profiles;
+mod search;
 mod projects;
 mod namespace_control;
 mod network_control;
@@ -19,6 +22,9 @@ mod sys_util;
 mod system_control;
 mod systemd_control;
 mod tuning;
+mod tweak_catalog;
+mod tweak_presets;
+mod tweaks;
 mod update_check;
 mod usb_control;
 mod vpn;
@@ -114,6 +120,10 @@ struct AppState {
     activity: Mutex<activity::ActivityState>,
     automation: Mutex<automation::State>,
     slow_health: Mutex<SlowHealth>,
+    battery_prev: Mutex<logbook::BatteryPrev>,
+    /// The tray icon and the menu line that shows live numbers, once built.
+    tray: Mutex<Option<TrayHandles>>,
+    net_totals: Mutex<std::collections::HashMap<String, (u64, u64)>>,
 }
 
 /// Health facts that are too expensive to recompute on every 10s tick
@@ -452,6 +462,7 @@ fn record_snapshot(app_state: &AppState, snap: &Snapshot) {
             cpu_stall: snap.pressure.cpu_some,
             mem_stall: snap.pressure.mem_some,
             io_stall: snap.pressure.io_some,
+            temp_c: snap.temperatures.iter().map(|t| t.celsius).fold(0.0, f32::max),
         },
     );
     for d in &snap.disks {
@@ -704,7 +715,7 @@ fn as_result(r: control_process::ActionResult) -> Result<String, String> {
     if r.ok { Ok(r.message) } else { Err(r.message) }
 }
 
-async fn execute_action(action: &profiles::Action) -> Result<String, String> {
+async fn execute_action(state: &AppState, action: &profiles::Action) -> Result<String, String> {
     use profiles::Action::*;
     match action {
         FreezeProcess { pid } => {
@@ -736,6 +747,20 @@ async fn execute_action(action: &profiles::Action) -> Result<String, String> {
         ResumeApp { app } => as_result(memory_map::app_action(app, "resume")),
         QuitApp { app } => as_result(memory_map::app_action(app, "kill")),
         SetPowerProfile { profile } => as_result(tuning::set_power_profile(profile)),
+        ApplyPreset { preset } => {
+            let changes = tweak_presets::changes_for(preset, &tweaks::list(&state.db))
+                .ok_or_else(|| format!("No settings preset called {preset}"))?;
+            if changes.is_empty() {
+                return Ok("Everything in the preset was already set".to_string());
+            }
+            let results = tweaks::apply(&state.db, &changes, &format!("preset:{preset}"), None);
+            let failed: Vec<String> = results.iter().filter(|r| !r.ok).map(|r| format!("{} ({})", r.title, r.message)).collect();
+            if failed.is_empty() {
+                Ok(format!("Applied {} setting(s)", results.len()))
+            } else {
+                Err(format!("{} of {} failed: {}", failed.len(), results.len(), failed.join("; ")))
+            }
+        }
     }
 }
 
@@ -899,7 +924,7 @@ async fn run_profile(state: &AppState, profile: &profiles::Profile, dry_run: boo
             });
             continue;
         }
-        let result = execute_action(action).await;
+        let result = execute_action(state, action).await;
         let (ok, message) = match &result {
             Ok(m) => (true, m.clone()),
             Err(e) => (false, e.clone()),
@@ -926,7 +951,7 @@ async fn undo_profile(
             continue;
         };
         let description = inverse.describe();
-        let result = execute_action(&inverse).await;
+        let result = execute_action(&state, &inverse).await;
         let (ok, message) = match &result {
             Ok(m) => (true, m.clone()),
             Err(e) => (false, e.clone()),
@@ -1262,6 +1287,95 @@ fn clean_up(state: tauri::State<AppState>, target: String) -> control_process::A
     logged(&state, &format!("clean_{target}"), desktop::clean(&target))
 }
 
+#[derive(Serialize)]
+struct CategoryView {
+    name: &'static str,
+    blurb: &'static str,
+}
+
+#[derive(Serialize)]
+struct TweaksView {
+    categories: Vec<CategoryView>,
+    tweaks: Vec<tweaks::TweakState>,
+    presets: Vec<tweak_presets::PresetView>,
+    recommendations: Vec<tweak_presets::Recommendation>,
+    changes: Vec<tweaks::ChangeRow>,
+    /// "none" | "installed" | "stale" | "missing"
+    boot_service: &'static str,
+}
+
+#[tauri::command(async)]
+fn get_tweaks(state: tauri::State<AppState>) -> TweaksView {
+    let tweaks = tweaks::list(&state.db);
+    TweaksView {
+        categories: tweak_catalog::CATEGORIES
+            .iter()
+            .map(|(name, blurb)| CategoryView { name, blurb })
+            .collect(),
+        presets: tweak_presets::list(&tweaks),
+        recommendations: tweak_presets::recommendations(&tweaks, &tweak_presets::Facts::gather()),
+        changes: tweaks::recent_changes(&state.db, 40),
+        boot_service: tweaks::boot_service_state(&state.db),
+        tweaks,
+    }
+}
+
+fn log_tweak_results(state: &AppState, source: &str, results: &[tweaks::ChangeResult]) {
+    for r in results {
+        log_action(
+            state,
+            &format!("tweak:{} ({source})", r.id),
+            r.ok,
+            &format!("{} → {}: {}", r.old_value, r.new_value, r.message),
+        );
+    }
+}
+
+#[tauri::command(async)]
+fn apply_tweaks(
+    state: tauri::State<AppState>,
+    changes: Vec<tweaks::Change>,
+    source: String,
+    keep: Option<bool>,
+) -> Vec<tweaks::ChangeResult> {
+    let results = tweaks::apply(&state.db, &changes, &source, keep);
+    log_tweak_results(&state, &source, &results);
+    results
+}
+
+#[tauri::command(async)]
+fn undo_tweak_batch(state: tauri::State<AppState>, batch: i64) -> Vec<tweaks::ChangeResult> {
+    let changes = tweaks::undo_changes(&state.db, batch);
+    let results = tweaks::apply(&state.db, &changes, "undo", None);
+    log_tweak_results(&state, "undo", &results);
+    results
+}
+
+#[tauri::command(async)]
+fn set_tweak_kept(state: tauri::State<AppState>, id: String, keep: bool) -> control_process::ActionResult {
+    let r = match tweaks::set_kept(&state.db, &id, keep) {
+        Ok(message) => sys_util::ok(message),
+        Err(e) => sys_util::err(e),
+    };
+    logged(&state, &format!("tweak_keep:{id}"), r)
+}
+
+#[tauri::command(async)]
+fn save_tweak_preset(state: tauri::State<AppState>, name: String) -> control_process::ActionResult {
+    match tweak_presets::save_current(&name, &tweaks::list(&state.db)) {
+        Ok(count) => sys_util::ok(format!("Saved “{}” with {count} setting(s)", name.trim())),
+        Err(e) => sys_util::err(e),
+    }
+}
+
+#[tauri::command(async)]
+fn delete_tweak_preset(name: String) -> control_process::ActionResult {
+    match tweak_presets::delete_saved(&name) {
+        Ok(()) => sys_util::ok("Preset deleted"),
+        Err(e) => sys_util::err(e),
+    }
+}
+
 #[tauri::command(async)]
 fn list_vpns() -> Vec<vpn::VpnConnection> {
     vpn::list()
@@ -1311,6 +1425,188 @@ fn add_vpn_gate_server(state: tauri::State<AppState>, host: String, connect: boo
     logged(&state, "vpn_gate_add", vpn::add_gate_server(&host, connect))
 }
 
+#[tauri::command(async)]
+fn connect_best_vpn_gate(state: tauri::State<AppState>, country_code: String) -> control_process::ActionResult {
+    logged(&state, "vpn_gate_auto", vpn::connect_best_gate(&country_code))
+}
+
+#[tauri::command(async)]
+fn get_public_address() -> Result<vpn::PublicAddress, String> {
+    vpn::public_address()
+}
+
+#[tauri::command(async)]
+fn get_vpn_kill_switch() -> vpn::KillSwitchStatus {
+    vpn::kill_switch_status()
+}
+
+#[tauri::command(async)]
+fn set_vpn_kill_switch(state: tauri::State<AppState>, enabled: bool, allow_lan: bool) -> control_process::ActionResult {
+    logged(&state, "vpn_kill_switch", vpn::set_kill_switch(enabled, allow_lan))
+}
+
+#[tauri::command(async)]
+fn get_vpn_split() -> vpn::SplitStatus {
+    vpn::split_status()
+}
+
+#[tauri::command(async)]
+fn start_vpn_split(state: tauri::State<AppState>, uuid: String) -> control_process::ActionResult {
+    logged(&state, "vpn_split_start", vpn::split_start(&uuid))
+}
+
+#[tauri::command(async)]
+fn stop_vpn_split(state: tauri::State<AppState>) -> control_process::ActionResult {
+    logged(&state, "vpn_split_stop", vpn::split_stop())
+}
+
+#[tauri::command(async)]
+fn launch_in_vpn(state: tauri::State<AppState>, command: String) -> control_process::ActionResult {
+    logged(&state, "vpn_split_launch", vpn::launch_in_vpn(&command))
+}
+
+#[tauri::command(async)]
+fn get_container_logs(id: String) -> Result<String, String> {
+    docker_control::container_logs(&id)
+}
+
+#[tauri::command(async)]
+fn get_container_stats(id: String) -> Result<docker_control::ContainerStats, String> {
+    docker_control::container_stats(&id)
+}
+
+#[tauri::command(async)]
+fn get_service_logs(name: String, user: bool) -> Result<Vec<String>, String> {
+    systemd_control::unit_logs(&name, user)
+}
+
+#[tauri::command(async)]
+fn import_profile_file(path: String) -> control_process::ActionResult {
+    match profiles::import_file(&path) {
+        Ok(name) => sys_util::ok(format!("Imported profile “{name}”")),
+        Err(e) => sys_util::err(e),
+    }
+}
+
+#[tauri::command(async)]
+fn get_autostart() -> autostart::AutostartStatus {
+    autostart::status()
+}
+
+#[tauri::command(async)]
+fn set_autostart(state: tauri::State<AppState>, enabled: bool) -> control_process::ActionResult {
+    logged(&state, "start_at_login", autostart::set(enabled))
+}
+
+#[tauri::command(async)]
+fn global_search(state: tauri::State<AppState>, query: String) -> Vec<search::Hit> {
+    // Snapshot the process list first so the lock isn't held during the search.
+    let sys = state.sys.lock().unwrap();
+    search::search(&state.db, &sys, &query)
+}
+
+#[tauri::command(async)]
+fn get_notifications(state: tauri::State<AppState>) -> Vec<logbook::NotificationRow> {
+    logbook::flush_notifications(&state.db);
+    logbook::recent_notifications(&state.db, 30)
+}
+
+#[derive(Serialize)]
+struct AppInfo {
+    version: &'static str,
+    /// Whether a tray icon could be created on this desktop.
+    tray: bool,
+}
+
+#[tauri::command(async)]
+fn get_app_info(state: tauri::State<AppState>) -> AppInfo {
+    AppInfo {
+        version: env!("CARGO_PKG_VERSION"),
+        tray: state.tray.lock().unwrap().is_some(),
+    }
+}
+
+// ---- tray ----
+
+struct TrayHandles {
+    tray: tauri::tray::TrayIcon,
+    stats: tauri::menu::MenuItem<tauri::Wry>,
+}
+
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        window.show().ok();
+        window.unminimize().ok();
+        window.set_focus().ok();
+    }
+}
+
+/// Builds the tray icon. Fails harmlessly on desktops without tray support,
+/// in which case closing the window simply quits as before.
+fn build_tray(app: &tauri::App) -> tauri::Result<TrayHandles> {
+    use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
+    let stats = MenuItemBuilder::with_id("stats", "Trace is starting…").enabled(false).build(app)?;
+    let mut power = SubmenuBuilder::new(app, "Power profile");
+    for profile in tuning::cpu_power().available_power_profiles {
+        power = power.text(format!("power:{profile}"), profile.replace('-', " "));
+    }
+    let menu = MenuBuilder::new(app)
+        .item(&stats)
+        .separator()
+        .text("open", "Open Trace")
+        .item(&power.build()?)
+        .text("awake_on", "Keep awake: turn on")
+        .text("awake_off", "Keep awake: turn off")
+        .separator()
+        .text("quit", "Quit Trace")
+        .build()?;
+    let mut builder = tauri::tray::TrayIconBuilder::with_id("main")
+        .menu(&menu)
+        .tooltip("Trace")
+        .on_menu_event(|app, event| {
+            let id = event.id().as_ref().to_string();
+            let state = app.state::<AppState>();
+            let tweak = |tweak_id: &str, value: &str| {
+                let change = tweaks::Change { id: tweak_id.to_string(), value: value.to_string() };
+                let results = tweaks::apply(&state.db, &[change], "tray", None);
+                log_tweak_results(&state, "tray", &results);
+            };
+            match id.as_str() {
+                "open" => show_main_window(app),
+                "quit" => app.exit(0),
+                "awake_on" => tweak("power.keep_awake", "on"),
+                "awake_off" => tweak("power.keep_awake", "off"),
+                other => {
+                    if let Some(profile) = other.strip_prefix("power:") {
+                        tweak("power.profile", profile);
+                    }
+                }
+            }
+        });
+    if let Some(icon) = app.default_window_icon() {
+        builder = builder.icon(icon.clone());
+    }
+    Ok(TrayHandles { tray: builder.build(app)?, stats })
+}
+
+fn update_tray(state: &AppState, snap: &Snapshot) {
+    let guard = state.tray.lock().unwrap();
+    let Some(handles) = guard.as_ref() else {
+        return;
+    };
+    let ram = snap.used_memory_bytes as f32 / snap.total_memory_bytes.max(1) as f32 * 100.0;
+    let hottest = snap.temperatures.iter().map(|t| t.celsius).fold(0.0, f32::max);
+    let mut line = format!("CPU {:.0}%  ·  RAM {:.0}%", snap.cpu_usage_percent, ram);
+    if hottest > 0.0 {
+        line.push_str(&format!("  ·  {hottest:.0}°C"));
+    }
+    handles.stats.set_text(&line).ok();
+    handles
+        .tray
+        .set_title(Some(format!("{:.0}% {:.0}%", snap.cpu_usage_percent, ram)))
+        .ok();
+}
+
 /// Runs an action, records it in the audit log, and hands the result back.
 fn logged(state: &AppState, name: &str, r: control_process::ActionResult) -> control_process::ActionResult {
     log_action(state, name, r.ok, &r.message);
@@ -1335,9 +1631,19 @@ fn app_action(state: tauri::State<AppState>, name: String, action: String) -> co
 }
 
 #[tauri::command(async)]
-fn limit_app_memory(state: tauri::State<AppState>, name: String, mb: u64) -> control_process::ActionResult {
-    let r = memory_map::limit_app_memory(&name, mb);
-    logged(&state, &format!("limit_app_memory:{name}"), r)
+fn get_app_limits(name: String) -> memory_map::AppLimits {
+    memory_map::app_limits(&name)
+}
+
+#[tauri::command(async)]
+fn set_app_limits(
+    state: tauri::State<AppState>,
+    name: String,
+    cpu_percent: Option<u32>,
+    memory_mb: Option<u64>,
+) -> control_process::ActionResult {
+    let r = memory_map::set_app_limits(&name, cpu_percent, memory_mb);
+    logged(&state, &format!("limit_app:{name}"), r)
 }
 
 #[tauri::command(async)]
@@ -1604,7 +1910,12 @@ fn background_tick(state: &AppState, snap: &Snapshot, tick: u64) {
             reboot_needed: health::reboot_status().reboot_needed,
         };
         logbook::ingest_crashes(&state.db, tick == 0);
+        logbook::ingest_power_events(&state.db, tick == 0);
+        logbook::ingest_packages(&state.db);
     }
+    logbook::record_battery(&state.db, now, TICK_SECS as i64, &mut state.battery_prev.lock().unwrap());
+    logbook::record_network(&state.db, now, &mut state.net_totals.lock().unwrap());
+    logbook::flush_notifications(&state.db);
 
     if let Some(app) = logbook::focused_app() {
         logbook::record_focus(&state.db, now, TICK_SECS as i64, &app);
@@ -1662,8 +1973,29 @@ fn background_tick(state: &AppState, snap: &Snapshot, tick: u64) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let start_hidden = std::env::args().any(|a| a == "--hidden");
     tauri::Builder::default()
+        // Must be registered first: a second launch hands over to the
+        // running copy (and brings its window back) instead of starting again.
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if !args.iter().any(|a| a == "--hidden") {
+                show_main_window(app);
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let state = window.state::<AppState>();
+                let has_tray = state.tray.lock().unwrap().is_some();
+                // Keep recording in the background; the tray icon (or
+                // launching Trace again) brings the window back.
+                if has_tray && automation::load().close_to_tray {
+                    api.prevent_close();
+                    window.hide().ok();
+                }
+            }
+        })
         .manage(AppState {
             sys: Mutex::new(System::new_all()),
             last_net: Mutex::new(std::collections::HashMap::new()),
@@ -1673,14 +2005,26 @@ pub fn run() {
             activity: Mutex::new(activity::ActivityState::default()),
             automation: Mutex::new(automation::State::default()),
             slow_health: Mutex::new(SlowHealth::default()),
+            battery_prev: Mutex::new(logbook::BatteryPrev::default()),
+            tray: Mutex::new(None),
+            net_totals: Mutex::new(std::collections::HashMap::new()),
         })
-        .setup(|app| {
+        .setup(move |app| {
             profiles::ensure_default_profiles();
+            match build_tray(app) {
+                Ok(handles) => *app.state::<AppState>().tray.lock().unwrap() = Some(handles),
+                Err(e) => eprintln!("trace: no tray icon on this desktop ({e})"),
+            }
+            if !start_hidden {
+                show_main_window(app.handle());
+            }
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 {
                     let state = handle.state::<AppState>();
                     logbook::init(&state.db);
+                    tweaks::init(&state.db);
+                    tweaks::reapply_session(&state.db);
                     state.db.prune_app_memory(chrono_now() - 14 * 86_400);
                     logbook::prune_raw(&state.db, chrono_now() - 90 * 86_400);
                     if let Some(boot) = health::boot_time() {
@@ -1696,6 +2040,7 @@ pub fn run() {
                         record_snapshot(&state, &snap);
                         poll_clipboard(&state);
                         background_tick(&state, &snap, tick);
+                        update_tray(&state, &snap);
                     }
                     tick += 1;
                     std::thread::sleep(std::time::Duration::from_secs(TICK_SECS));
@@ -1762,6 +2107,29 @@ pub fn run() {
             list_namespaces,
             scan_folder_sizes,
             get_memory_breakdown,
+            connect_best_vpn_gate,
+            get_public_address,
+            get_vpn_kill_switch,
+            set_vpn_kill_switch,
+            get_vpn_split,
+            start_vpn_split,
+            stop_vpn_split,
+            launch_in_vpn,
+            get_container_logs,
+            get_container_stats,
+            get_service_logs,
+            import_profile_file,
+            get_autostart,
+            set_autostart,
+            global_search,
+            get_notifications,
+            get_app_info,
+            get_tweaks,
+            apply_tweaks,
+            undo_tweak_batch,
+            set_tweak_kept,
+            save_tweak_preset,
+            delete_tweak_preset,
             list_vpns,
             set_vpn_active,
             set_vpn_autoconnect,
@@ -1783,7 +2151,8 @@ pub fn run() {
             clean_up,
             get_app_memory_history,
             app_action,
-            limit_app_memory,
+            get_app_limits,
+            set_app_limits,
             get_pressure_history,
             get_activity,
             get_health,
@@ -1820,8 +2189,13 @@ pub fn run() {
             set_monitor_mode,
             set_night_light
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|_app, event| {
+            if let tauri::RunEvent::Exit = event {
+                tweaks::release_keep_awake();
+            }
+        });
 }
 
 #[cfg(test)]
@@ -1841,6 +2215,9 @@ mod tests {
             activity: Mutex::new(activity::ActivityState::default()),
             automation: Mutex::new(automation::State::default()),
             slow_health: Mutex::new(SlowHealth::default()),
+            battery_prev: Mutex::new(logbook::BatteryPrev::default()),
+            tray: Mutex::new(None),
+            net_totals: Mutex::new(std::collections::HashMap::new()),
         };
         let snap = take_snapshot(&state);
         assert!(snap.total_memory_bytes > 0);
@@ -1858,7 +2235,12 @@ mod tests {
         assert!(report.score <= 100);
 
         logbook::init(&state.db);
+        tweaks::init(&state.db);
         logbook::ingest_crashes(&state.db, false);
+        logbook::ingest_power_events(&state.db, false);
+        logbook::ingest_packages(&state.db);
+        logbook::record_battery(&state.db, chrono_now(), 10, &mut state.battery_prev.lock().unwrap());
+        logbook::record_network(&state.db, chrono_now(), &mut state.net_totals.lock().unwrap());
         for kind in ["day", "week", "month", "year"] {
             let report = logbook::report(&state.db, kind, 0).unwrap();
             assert!(report.end_ts > report.start_ts);
@@ -1905,6 +2287,18 @@ mod tests {
         dump("get_automation", json(&automation::Config::default()));
         dump("list_profiles", json(&profiles::list_profiles()));
         dump("list_vpns", json(&vpn::list()));
+        let all = tweaks::list(&state.db);
+        dump(
+            "get_tweaks",
+            serde_json::json!({
+                "categories": tweak_catalog::CATEGORIES.iter().map(|(name, blurb)| serde_json::json!({"name": name, "blurb": blurb})).collect::<Vec<_>>(),
+                "presets": tweak_presets::list(&all),
+                "recommendations": tweak_presets::recommendations(&all, &tweak_presets::Facts::gather()),
+                "changes": tweaks::recent_changes(&state.db, 40),
+                "boot_service": tweaks::boot_service_state(&state.db),
+                "tweaks": all,
+            }),
+        );
         dump("find_vpn_configs", json(&vpn::find_configs()));
         if let Ok(servers) = vpn::fetch_gate_servers() {
             dump("fetch_vpn_gate_servers", json(&servers));

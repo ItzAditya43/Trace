@@ -85,13 +85,26 @@ interface AppMemoryPoint {
   swap_bytes: number;
 }
 
-/** Quit / freeze / restart / cap controls for one app row. */
+interface AppLimits {
+  cpu_percent: number | null;
+  memory_mb: number | null;
+  unavailable: string | null;
+}
+
+/** Quit / freeze / restart / limit controls for one app row. */
 function AppActions({ app, onDone }: { app: AppMemory; onDone: () => void }) {
-  const { result, busy, run } = useAction(onDone);
-  const [capMb, setCapMb] = useState(
-    String(Math.max(256, Math.round(app.ram_bytes / 1024 / 1024 / 256) * 256))
-  );
+  const limits = usePoll<AppLimits>("get_app_limits", { name: app.name });
+  const { result, busy, run } = useAction(() => {
+    onDone();
+    limits.reload();
+  });
+  const [cpu, setCpu] = useState("");
+  const [ram, setRam] = useState("");
   const act = (action: string) => run("app_action", { name: app.name, action });
+  const current = limits.data;
+  const cpuValue = cpu === "" ? null : parseInt(cpu, 10);
+  const ramValue = ram === "" ? null : parseInt(ram, 10);
+  const valid = (cpuValue === null || cpuValue >= 5) && (ramValue === null || ramValue >= 64);
 
   return (
     <div className="mem-actions">
@@ -110,30 +123,64 @@ function AppActions({ app, onDone }: { app: AppMemory; onDone: () => void }) {
           Resume
         </button>
         <ConfirmButton label="Quit" disabled={busy} onConfirm={() => act("kill")} />
-        <ConfirmButton
-          label="Force kill"
-          disabled={busy}
-          onConfirm={() => act("force_kill")}
-        />
-        <span className="mem-cap">
+        <ConfirmButton label="Force kill" disabled={busy} onConfirm={() => act("force_kill")} />
+      </div>
+      {current?.unavailable ? (
+        <p className="diagnose-hint">Limits unavailable: {current.unavailable}.</p>
+      ) : (
+        <div className="control-row">
+          <label>
+            Limit this app
+            <span className="mem-muted">
+              {" "}
+              — now:{" "}
+              {current?.cpu_percent ? `${current.cpu_percent}% CPU` : "no CPU limit"},{" "}
+              {current?.memory_mb ? `${current.memory_mb} MB RAM` : "no RAM limit"}
+            </span>
+          </label>
           <input
             className="port-input small"
-            value={capMb}
-            onChange={(e) => setCapMb(e.target.value)}
-            aria-label="Memory cap in MB"
+            placeholder="CPU % (100 = 1 core)"
+            value={cpu}
+            onChange={(e) => setCpu(e.target.value.replace(/\D/g, ""))}
+            aria-label="CPU limit in percent of one core"
+          />
+          <input
+            className="port-input small"
+            placeholder="RAM in MB"
+            value={ram}
+            onChange={(e) => setRam(e.target.value.replace(/\D/g, ""))}
+            aria-label="RAM limit in megabytes"
           />
           <button
             className="ctl-btn"
-            disabled={busy || !(parseInt(capMb, 10) > 0)}
+            disabled={busy || !valid || (cpuValue === null && ramValue === null)}
             onClick={() =>
-              run("limit_app_memory", { name: app.name, mb: parseInt(capMb, 10) })
+              run("set_app_limits", {
+                name: app.name,
+                cpuPercent: cpuValue ?? current?.cpu_percent ?? null,
+                memoryMb: ramValue ?? current?.memory_mb ?? null,
+              })
             }
           >
-            Cap at MB
+            Set limit
           </button>
-        </span>
-      </div>
+          <button
+            className="ctl-btn"
+            disabled={busy || !(current?.cpu_percent || current?.memory_mb)}
+            onClick={() => run("set_app_limits", { name: app.name, cpuPercent: null, memoryMb: null })}
+          >
+            Remove
+          </button>
+        </div>
+      )}
       <StatusLine result={result} />
+      {!current?.unavailable && (
+        <p className="diagnose-hint">
+          Limits need no password and last until the app closes. Over its CPU limit the app is simply
+          slowed; over its RAM limit its memory is pushed into swap rather than the app being killed.
+        </p>
+      )}
     </div>
   );
 }

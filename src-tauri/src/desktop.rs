@@ -197,11 +197,15 @@ fn parse_journal_usage(text: &str) -> u64 {
     (value * scale) as u64
 }
 
+pub fn journal_bytes() -> u64 {
+    parse_journal_usage(&run_lossy(Command::new("journalctl").arg("--disk-usage")))
+}
+
 pub fn cleanup_status() -> CleanupStatus {
     CleanupStatus {
         trash_bytes: trash_dir().map(|d| du(&d)).unwrap_or(0),
         thumbnails_bytes: thumbnails_dir().map(|d| du(&d)).unwrap_or(0),
-        journal_bytes: parse_journal_usage(&run_lossy(Command::new("journalctl").arg("--disk-usage"))),
+        journal_bytes: journal_bytes(),
         coredump_bytes: du(std::path::Path::new("/var/lib/systemd/coredump")),
         user_cache_bytes: dirs::cache_dir().map(|d| du(&d)).unwrap_or(0),
     }

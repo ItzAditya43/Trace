@@ -19,6 +19,8 @@ pub enum Action {
     ResumeApp { app: String },
     QuitApp { app: String },
     SetPowerProfile { profile: String },
+    /// A Tweaks preset, by id (built-in) or name (saved).
+    ApplyPreset { preset: String },
 }
 
 impl Action {
@@ -41,6 +43,8 @@ impl Action {
             // The previous power profile and a quit app's state aren't captured.
             Action::QuitApp { .. } => None,
             Action::SetPowerProfile { .. } => None,
+            // Undo a preset from Tweaks → Recent changes, which knows the old values.
+            Action::ApplyPreset { .. } => None,
         }
     }
 
@@ -64,6 +68,7 @@ impl Action {
             Action::ResumeApp { app } => format!("Resume every {app} process"),
             Action::QuitApp { app } => format!("Quit {app}"),
             Action::SetPowerProfile { profile } => format!("Switch power profile to {profile}"),
+            Action::ApplyPreset { preset } => format!("Apply the “{preset}” settings preset"),
         }
     }
 }
@@ -120,4 +125,13 @@ pub fn ensure_default_profiles() {
         actions: vec![],
     };
     save_profile(&focus).ok();
+}
+
+/// Copies a profile TOML file from anywhere into the profiles folder,
+/// after checking that it parses.
+pub fn import_file(path: &str) -> Result<String, String> {
+    let text = fs::read_to_string(path).map_err(|e| format!("Couldn't read {path}: {e}"))?;
+    let profile: Profile = toml::from_str(&text).map_err(|e| format!("Not a Trace profile: {e}"))?;
+    save_profile(&profile)?;
+    Ok(profile.name)
 }

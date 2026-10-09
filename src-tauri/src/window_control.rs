@@ -51,35 +51,22 @@ pub fn list_windows() -> Result<Vec<WindowInfo>, String> {
 }
 
 pub fn move_window_to_workspace(address: &str, workspace: i32) -> ActionResult {
-    if !is_hyprland() {
-        return err("Not running under Hyprland");
-    }
-    match run(Command::new("hyprctl").args([
-        "dispatch",
-        "movetoworkspacesilent",
-        &format!("{workspace},address:{address}"),
-    ])) {
-        Ok(_) => ok(format!("Moved window {address} to workspace {workspace}")),
+    match crate::hypr::move_window_to_workspace(address, workspace) {
+        Ok(()) => ok(format!("Moved window to workspace {workspace}")),
         Err(e) => err(format!("Failed to move window: {e}")),
     }
 }
 
 pub fn focus_workspace(workspace: i32) -> ActionResult {
-    if !is_hyprland() {
-        return err("Not running under Hyprland");
-    }
-    match run(Command::new("hyprctl").args(["dispatch", "workspace", &workspace.to_string()])) {
-        Ok(_) => ok(format!("Switched to workspace {workspace}")),
+    match crate::hypr::focus_workspace(workspace) {
+        Ok(()) => ok(format!("Switched to workspace {workspace}")),
         Err(e) => err(format!("Failed to switch workspace: {e}")),
     }
 }
 
 pub fn close_window(address: &str) -> ActionResult {
-    if !is_hyprland() {
-        return err("Not running under Hyprland");
-    }
-    match run(Command::new("hyprctl").args(["dispatch", "closewindow", &format!("address:{address}")])) {
-        Ok(_) => ok(format!("Closed window {address}")),
+    match crate::hypr::close_window(address) {
+        Ok(()) => ok("Asked the window to close"),
         Err(e) => err(format!("Failed to close window: {e}")),
     }
 }

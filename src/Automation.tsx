@@ -24,6 +24,7 @@ interface Schedule {
 
 interface Config {
   alerts_enabled: boolean;
+  close_to_tray: boolean;
   rules: Rule[];
   schedules: Schedule[];
 }
@@ -31,7 +32,8 @@ interface Config {
 type BuilderAction =
   | { type: "FreezeApp" | "ResumeApp" | "QuitApp"; app: string }
   | { type: "SetPowerProfile"; profile: string }
-  | { type: "StartService" | "StopService" | "RestartService"; name: string };
+  | { type: "StartService" | "StopService" | "RestartService"; name: string }
+  | { type: "ApplyPreset"; preset: string };
 
 interface Profile {
   name: string;
@@ -53,6 +55,7 @@ const BUILDER_TYPES: { type: BuilderAction["type"]; label: string; field: string
   { type: "ResumeApp", label: "Resume app", field: "app" },
   { type: "QuitApp", label: "Quit app", field: "app" },
   { type: "SetPowerProfile", label: "Set power profile", field: "profile" },
+  { type: "ApplyPreset", label: "Apply settings preset", field: "preset" },
   { type: "StartService", label: "Start service", field: "name" },
   { type: "StopService", label: "Stop service", field: "name" },
   { type: "RestartService", label: "Restart service", field: "name" },
@@ -394,7 +397,7 @@ function ProfileBuilder({ apps, onSaved }: { apps: string[]; onSaved: () => void
         {actions.map((a, i) => (
           <li key={i}>
             {BUILDER_TYPES.find((t) => t.type === a.type)!.label}:{" "}
-            {"app" in a ? a.app : "profile" in a ? a.profile : a.name}{" "}
+            {"app" in a ? a.app : "profile" in a ? a.profile : "preset" in a ? a.preset : a.name}{" "}
             <button
               className="chip chip-button"
               onClick={() => setActions(actions.filter((_, j) => j !== i))}
@@ -425,7 +428,13 @@ function ProfileBuilder({ apps, onSaved }: { apps: string[]; onSaved: () => void
         ) : (
           <input
             className="port-input"
-            placeholder={spec.field === "profile" ? "performance" : "bluetooth.service"}
+            placeholder={
+              spec.field === "profile"
+                ? "performance"
+                : spec.field === "preset"
+                ? "Gaming (a preset name from Tweaks)"
+                : "bluetooth.service"
+            }
             value={target}
             onChange={(e) => setTarget(e.target.value)}
           />

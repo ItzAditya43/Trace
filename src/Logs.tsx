@@ -18,6 +18,8 @@ interface Totals {
   cpu_stall_avg: number;
   mem_stall_avg: number;
   io_stall_avg: number;
+  temp_avg: number;
+  temp_max: number;
 }
 
 interface LogReport {
@@ -42,6 +44,36 @@ interface LogReport {
   actions: { ts: number; action: string; ok: boolean; message: string }[];
   actions_failed: number;
   boots: { ts: number; total_ms: number; userspace_ms: number }[];
+  battery: {
+    discharged_wh: number;
+    charged_wh: number;
+    on_battery_secs: number;
+    min_percent: number;
+    max_percent: number;
+    cycles_added: number;
+    days_recorded: number;
+  };
+  network: { iface: string; rx_bytes: number; tx_bytes: number }[];
+  power_events: { ts: number; kind: string; detail: string }[];
+  packages: { ts: number; action: string; name: string; old_version: string; new_version: string }[];
+  package_count: number;
+  notifications: { ts: number; title: string; body: string; critical: boolean }[];
+}
+
+const POWER_LABEL: Record<string, string> = {
+  lid_closed: "Lid closed",
+  lid_opened: "Lid opened",
+  suspend: "Went to sleep",
+  resume: "Woke up",
+  login: "Logged in",
+  logout: "Logged out",
+  power_key: "Power button pressed",
+};
+
+function dataSize(bytes: number): string {
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
+  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(0)} MB`;
+  return `${(bytes / 1024).toFixed(0)} KB`;
 }
 
 type Kind = "day" | "week" | "month" | "year";
@@ -199,6 +231,9 @@ export default function Logs() {
     .filter((a) => a.focus_secs === 0)
     .sort((a, b) => b.running_secs - a.running_secs);
   const warnings = r.events.filter((e) => e.severity !== "info").length;
+  const dataDown = r.network.reduce((sum, n) => sum + n.rx_bytes, 0);
+  const dataUp = r.network.reduce((sum, n) => sum + n.tx_bytes, 0);
+  const sleeps = r.power_events.filter((e) => e.kind === "suspend").length;
   const empty = t.hours_recorded === 0;
 
   return (
@@ -240,6 +275,29 @@ export default function Logs() {
           tone={warnings > 0 ? "warn" : "ok"}
         />
         <Tile
+          label="Hottest"
+          value={t.temp_max > 0 ? `${t.temp_max.toFixed(0)}°C` : "—"}
+          detail={t.temp_avg > 0 ? `average ${t.temp_avg.toFixed(0)}°C` : "no sensor data yet"}
+          tone={t.temp_max > 92 ? "danger" : t.temp_max > 82 ? "warn" : undefined}
+        />
+        <Tile
+          label="Data used"
+          value={dataSize(dataDown + dataUp)}
+          detail={`↓ ${dataSize(dataDown)} · ↑ ${dataSize(dataUp)}`}
+        />
+        {r.battery.days_recorded > 0 && (
+          <Tile
+            label="On battery"
+            value={formatDuration(r.battery.on_battery_secs)}
+            detail={`${r.battery.discharged_wh.toFixed(0)} Wh drained`}
+          />
+        )}
+        <Tile
+          label="Packages changed"
+          value={String(r.package_count)}
+          detail="installed, updated or removed"
+        />
+        <Tile
           label="Actions taken"
           value={String(r.actions.length)}
           detail={r.actions_failed > 0 ? `${r.actions_failed} failed` : "from Control and rules"}
@@ -275,6 +333,19 @@ export default function Logs() {
           bars={r.buckets.map((b) => ({ label: bucketLabel(kind, b.start_ts), value: b.crashes }))}
           color="#d95926"
           format={(v) => v.toFixed(0)}
+        />
+      </section>
+
+      <section className="panel">
+        <h2>Peak Temperature</h2>
+        <BarChart
+          bars={r.buckets.map((b) => ({
+            label: bucketLabel(kind, b.start_ts),
+            value: b.totals.temp_max,
+            empty: b.totals.temp_max === 0,
+          }))}
+          color="#c98500"
+          format={(v) => `${v.toFixed(0)}°C`}
         />
       </section>
 
@@ -369,6 +440,116 @@ export default function Logs() {
             <div key={i} className="event-row">
               <span className="event-time">{stamp(e.ts, kind)}</span>
               <span className="event-message">{e.message}</span>
+            </div>
+          )}
+        />
+      </section>
+
+      <section className="panel">
+        <h2>Battery</h2>
+        {r.battery.days_recorded === 0 ? (
+          <p className="diagnose-hint">No battery data recorded for this period.</p>
+        ) : (
+          <>
+            <div className="meta-row">
+              <span>Time on battery</span>
+              <span>{formatDuration(r.battery.on_battery_secs)}</span>
+            </div>
+            <div className="meta-row">
+              <span>Drained / charged</span>
+              <span>
+                {r.battery.discharged_wh.toFixed(1)} Wh / {r.battery.charged_wh.toFixed(1)} Wh
+              </span>
+            </div>
+            <div className="meta-row">
+              <span>Charge level range</span>
+              <span>
+                {r.battery.min_percent.toFixed(0)}% – {r.battery.max_percent.toFixed(0)}%
+              </span>
+            </div>
+            <div className="meta-row">
+              <span>Charge cycles added</span>
+              <span>{r.battery.cycles_added}</span>
+            </div>
+            {r.battery.on_battery_secs > 600 && (
+              <div className="meta-row">
+                <span>Average draw on battery</span>
+                <span>
+                  {(r.battery.discharged_wh / (r.battery.on_battery_secs / 3600)).toFixed(1)} W
+                </span>
+              </div>
+            )}
+          </>
+        )}
+      </section>
+
+      <section className="panel">
+        <h2>Network Data</h2>
+        {r.network.length === 0 && <p className="diagnose-hint">Nothing recorded yet.</p>}
+        {r.network.map((n) => (
+          <div key={n.iface} className="meta-row">
+            <span>{n.iface}</span>
+            <span>
+              ↓ {dataSize(n.rx_bytes)} · ↑ {dataSize(n.tx_bytes)}
+            </span>
+          </div>
+        ))}
+        <p className="diagnose-hint">
+          Counted on physical interfaces only, so VPN and container traffic isn't counted twice.
+        </p>
+      </section>
+
+      <section className="panel">
+        <h2>
+          Sleep, Lid &amp; Logins ({r.power_events.length}
+          {sleeps > 0 ? `, slept ${sleeps}×` : ""})
+        </h2>
+        {r.power_events.length === 0 && <p className="diagnose-hint">Nothing in this period.</p>}
+        <Limited
+          rows={r.power_events}
+          render={(e, i) => (
+            <div key={i} className="event-row">
+              <span className="event-time">{stamp(e.ts, kind)}</span>
+              <span className="event-message" title={e.detail}>
+                {POWER_LABEL[e.kind] ?? e.kind}
+              </span>
+            </div>
+          )}
+        />
+      </section>
+
+      <section className="panel">
+        <h2>Package Changes ({r.package_count})</h2>
+        {r.packages.length === 0 && <p className="diagnose-hint">No packages changed.</p>}
+        <Limited
+          rows={r.packages}
+          render={(p, i) => (
+            <div key={i} className="event-row">
+              <span className="event-time">{stamp(p.ts, kind)}</span>
+              <span className="event-message">
+                {p.action} <strong>{p.name}</strong>{" "}
+                <span className="mem-muted">
+                  {p.old_version && p.new_version
+                    ? `${p.old_version} → ${p.new_version}`
+                    : p.new_version || p.old_version}
+                </span>
+              </span>
+            </div>
+          )}
+        />
+      </section>
+
+      <section className="panel">
+        <h2>Alerts Trace Sent ({r.notifications.length})</h2>
+        {r.notifications.length === 0 && <p className="diagnose-hint">No notifications in this period.</p>}
+        <Limited
+          rows={r.notifications}
+          render={(n, i) => (
+            <div key={i} className="event-row">
+              <span className="event-time">{stamp(n.ts, kind)}</span>
+              <span className="event-message">
+                <strong>{n.title}</strong> <span className="mem-muted">{n.body}</span>
+              </span>
             </div>
           )}
         />

@@ -106,3 +106,32 @@ pub async fn restart_unit(name: &str) -> Result<String, String> {
         .map(|_| format!("Restarted {name}"))
         .map_err(|e| format!("Failed to restart {name}: {e}"))
 }
+
+/// The last journal lines of a unit, oldest first.
+pub fn unit_logs(name: &str, user: bool) -> Result<Vec<String>, String> {
+    let valid = !name.is_empty()
+        && name.len() <= 200
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || "-_.@:\\".contains(c));
+    if !valid {
+        return Err("Not a unit name".to_string());
+    }
+    let mut cmd = std::process::Command::new("journalctl");
+    if user {
+        cmd.arg("--user");
+    }
+    let out = cmd
+        .args(["-u", name, "-n", "120", "--no-pager", "-q", "-o", "short-iso"])
+        .output()
+        .map_err(|e| format!("Couldn't read the journal: {e}"))?;
+    Ok(String::from_utf8_lossy(&out.stdout)
+        .lines()
+        // Drop the hostname column: "<time> <host> <rest>" -> "<time> <rest>"
+        .map(|line| {
+            let mut parts = line.splitn(3, ' ');
+            match (parts.next(), parts.next(), parts.next()) {
+                (Some(time), Some(_host), Some(rest)) => format!("{time} {rest}"),
+                _ => line.to_string(),
+            }
+        })
+        .collect())
+}

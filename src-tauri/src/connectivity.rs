@@ -317,9 +317,8 @@ pub fn set_monitor_mode(name: &str, mode: &str, scale: f64) -> ActionResult {
     if !(0.5..=3.0).contains(&scale) {
         return err("Scale must be between 0.5 and 3");
     }
-    let spec = format!("{name},{},auto,{scale}", mode.trim_end_matches("Hz"));
     action(
-        run(Command::new("hyprctl").args(["keyword", "monitor", &spec])),
+        crate::hypr::set_monitor(name, mode.trim_end_matches("Hz"), scale).map(|_| String::new()),
         format!("{name} set to {mode} at {scale}× scale"),
     )
 }
