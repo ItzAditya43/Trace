@@ -15,6 +15,7 @@ import { CpuPowerControl, FanControl, MemoryTuningControl } from "./ControlTunin
 import { AudioControl, CleanupControl, SessionControl } from "./ControlDesktop";
 import { VpnControl } from "./ControlVpn";
 import { DisplayControl, FirewallControl, WirelessControl } from "./ControlConnect";
+import { Reminders, WifiSignal } from "./Batch6";
 
 interface ProcessInfo {
   pid: number;
@@ -1266,6 +1267,10 @@ function WhatIsWithApps() {
   return <WhatIs apps={useRunningApps()} />;
 }
 
+function RemindersWithApps() {
+  return <Reminders apps={useRunningApps()} />;
+}
+
 function GroupBudgetsWithApps() {
   return <GroupBudgets apps={useRunningApps()} />;
 }
@@ -1326,6 +1331,7 @@ export default function Control() {
           <SpeedHistory />
           <SavedWifiCard />
           <WifiChannels />
+          <WifiSignal />
           <Connections />
           <WirelessControl />
           <FirewallControl />
@@ -1356,6 +1362,7 @@ export default function Control() {
           <Automation onProfilesChanged={() => setProfilesVersion((v) => v + 1)} />
           <GameModeCard />
           <GroupBudgetsWithApps />
+          <RemindersWithApps />
           <AppSettings />
           <ActionLog />
         </>

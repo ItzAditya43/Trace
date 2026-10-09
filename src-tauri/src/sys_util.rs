@@ -95,9 +95,15 @@ pub fn take_notifications() -> Vec<SentNotification> {
     std::mem::take(&mut *SENT.lock().unwrap())
 }
 
+/// While set, only critical notifications are shown (focus time).
+pub static QUIET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 pub fn notify(title: &str, body: &str, critical: bool) {
     // Unit tests exercise rules and alerts; they shouldn't pop real notifications.
     if cfg!(test) {
+        return;
+    }
+    if !critical && QUIET.load(std::sync::atomic::Ordering::Relaxed) {
         return;
     }
     SENT.lock().unwrap().push(SentNotification {

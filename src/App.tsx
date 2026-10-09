@@ -17,6 +17,9 @@ import { NavContext, NavTarget } from "./nav";
 import { Tile, isWindowVisible, onWindowShown } from "./ui";
 import UpdateBanner from "./UpdateBanner";
 import "./App.css";
+import { CardChooser, CardPrefs, SetupCard, loadCardPrefs } from "./Batch6";
+
+const CARD_LABELS: Record<string, string> = { health: "System Health", cores: "Cores", gpus: "GPUs", temps: "Temperatures & Power", network: "Network", disks: "Disks", processes: "Top Processes (by memory)" };
 
 interface ProcessInfo {
   pid: number;
@@ -147,6 +150,9 @@ function MiniBar({ label, percent }: { label: string; percent: number }) {
 }
 
 function App() {
+  const [cardPrefs, setCardPrefs] = useState<CardPrefs>(() => loadCardPrefs(Object.keys(CARD_LABELS)));
+  // Cards keep their place in the page's code; the chosen order is applied as a layout order.
+  const cardStyle = (id: string) => ({ order: 10 + cardPrefs.order.indexOf(id), display: cardPrefs.hidden.includes(id) ? "none" : undefined });
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [target, setTarget] = useState<NavTarget>({ page: "live", nonce: 0 });
   const [searching, setSearching] = useState(false);
@@ -159,7 +165,9 @@ function App() {
 
   // `trace page <name>` and `trace panic` from a terminal or a key binding.
   useEffect(() => {
-    const stop = listen<{ page: string }>("navigate", (event) => go({ page: event.payload.page }));
+    const stop = listen<{ page: string; section?: string }>("navigate", (event) =>
+      go({ page: event.payload.page, ...(event.payload.section ? { section: event.payload.section } : {}) })
+    );
     return () => {
       stop.then((off) => off());
     };
@@ -299,6 +307,7 @@ function App() {
       {tab === "live" && (
         <>
       <UpdateBanner />
+      <SetupCard />
       <div className="tile-grid">
         <Tile
           label="CPU"
@@ -353,7 +362,7 @@ function App() {
       <PinnedSwitches />
       <HealthScore compact />
 
-      <section className="panel">
+      <section className="panel" style={cardStyle("health")}>
         <h2>System Health</h2>
         <Bar percent={snapshot.cpu_usage_percent} label="CPU" />
         <Bar percent={memPercent} label="RAM" />
@@ -382,7 +391,7 @@ function App() {
         <ExplainNow />
       </section>
 
-      <section className="panel">
+      <section className="panel" style={cardStyle("cores")}>
         <h2>Cores</h2>
         <div className="core-grid">
           {snapshot.per_core_usage.map((usage, i) => {
@@ -409,7 +418,7 @@ function App() {
       </section>
 
       {snapshot.gpus.length > 0 && (
-        <section className="panel">
+        <section className="panel" style={cardStyle("gpus")}>
           <h2>GPUs</h2>
           {snapshot.gpus.map((g, i) => {
             const vramPct = g.vram_total_bytes
@@ -446,7 +455,7 @@ function App() {
       )}
 
       {(snapshot.temperatures.length > 0 || snapshot.battery) && (
-        <section className="panel">
+        <section className="panel" style={cardStyle("temps")}>
           <h2>Temperatures &amp; Power</h2>
           {snapshot.battery && (
             <div className="meta-row">
@@ -481,7 +490,7 @@ function App() {
       )}
 
       {snapshot.networks.length > 0 && (
-        <section className="panel">
+        <section className="panel" style={cardStyle("network")}>
           <h2>Network</h2>
           {snapshot.networks.map((n) => (
             <div key={n.interface} className="meta-row">
@@ -495,7 +504,7 @@ function App() {
         </section>
       )}
 
-      <section className="panel">
+      <section className="panel" style={cardStyle("disks")}>
         <h2>Disks</h2>
         {snapshot.disks.map((d) => {
           const usedPct =
@@ -517,7 +526,7 @@ function App() {
         })}
       </section>
 
-      <section className="panel wide">
+      <section className="panel wide" style={cardStyle("processes")}>
         <h2>Top Processes (by memory)</h2>
         <table className="proc-table">
           <thead>
@@ -540,6 +549,7 @@ function App() {
           </tbody>
         </table>
       </section>
+      <CardChooser prefs={cardPrefs} labels={CARD_LABELS} onChange={setCardPrefs} />
         </>
       )}
       </div>

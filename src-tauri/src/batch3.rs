@@ -18,6 +18,9 @@ pub struct Finding {
     pub level: String,
     pub title: String,
     pub detail: String,
+    /// Id of a fix Trace can apply, or "".
+    pub fix: String,
+    pub fix_label: String,
 }
 
 #[derive(Serialize)]
@@ -34,7 +37,8 @@ fn unit_active(unit: &str) -> bool {
 pub fn security_report() -> SecurityReport {
     let mut findings = Vec::new();
     let mut add = |level: &str, title: &str, detail: String| {
-        findings.push(Finding { level: level.into(), title: title.into(), detail });
+        let (fix, fix_label) = crate::batch6::fix_for(title).unwrap_or(("", ""));
+        findings.push(Finding { level: level.into(), title: title.into(), detail, fix: fix.into(), fix_label: fix_label.into() });
     };
 
     let firewall = unit_active("firewalld") || unit_active("ufw") || unit_active("nftables");
@@ -332,7 +336,7 @@ pub fn privacy_clean(id: &str) -> ActionResult {
 /// Starts `command` as you, optionally cut off from the network and capped
 /// in memory and CPU. Uses systemd for the caps and an empty network
 /// namespace for "no network"; no root involved.
-pub fn run_restricted(command: &str, no_network: bool, memory_mb: Option<u64>, cpu_percent: Option<u32>) -> ActionResult {
+pub fn run_restricted(command: &str, no_network: bool, read_only: bool, memory_mb: Option<u64>, cpu_percent: Option<u32>) -> ActionResult {
     let command = command.trim();
     if command.is_empty() {
         return err("Type the command to run");
@@ -346,7 +350,12 @@ pub fn run_restricted(command: &str, no_network: bool, memory_mb: Option<u64>, c
         cmd.arg("-p").arg(format!("CPUQuota={p}%"));
     }
     cmd.arg("--");
-    if no_network {
+    if read_only {
+        if !crate::sys_util::has_tool("bwrap") {
+            return err("Read-only mode needs bubblewrap (bwrap) installed");
+        }
+        cmd.args(restricted_wrapper(no_network));
+    } else if no_network {
         // A fresh user + network namespace: the program sees no interfaces at all.
         cmd.args(["unshare", "-rn", "--"]);
     }
@@ -360,13 +369,25 @@ pub fn run_restricted(command: &str, no_network: bool, memory_mb: Option<u64>, c
         .spawn()
     {
         Ok(_) => ok(format!(
-            "Started {command}{}{}{}",
+            "Started {command}{}{}{}{}",
             if no_network { " with no network" } else { "" },
+            if read_only { ", unable to change any file" } else { "" },
             memory_mb.map(|m| format!(", at most {m} MB")).unwrap_or_default(),
             cpu_percent.map(|p| format!(", at most {p}% CPU")).unwrap_or_default(),
         )),
         Err(e) => err(format!("Couldn't start it: {e}")),
     }
+}
+
+/// The bubblewrap prefix for a program that may read everything but write
+/// only to a throwaway /tmp of its own.
+fn restricted_wrapper(no_network: bool) -> Vec<&'static str> {
+    let mut args = vec!["bwrap", "--ro-bind", "/", "/", "--dev-bind", "/dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp", "--die-with-parent"];
+    if no_network {
+        args.push("--unshare-net");
+    }
+    args.push("--");
+    args
 }
 
 // ---- stress test ----
@@ -541,11 +562,14 @@ pub fn focus_start(apps: Vec<String>, minutes: u32, now: i64) -> ActionResult {
     }
     let focus = Focus { apps: frozen.clone(), until: now + minutes as i64 * 60 };
     fs::write(focus_path(), serde_json::to_string(&focus).unwrap_or_default()).ok();
-    ok(format!("Focus on for {minutes} min: {} frozen", frozen.join(", ")))
+    // Trace keeps its own non-urgent alerts to itself until the session ends.
+    crate::sys_util::QUIET.store(true, std::sync::atomic::Ordering::Relaxed);
+    ok(format!("Focus on for {minutes} min: {} frozen, Trace's own alerts held back", frozen.join(", ")))
 }
 
 /// Wakes the frozen apps. Returns their names if a session was running.
 pub fn focus_end() -> Option<Vec<String>> {
+    crate::sys_util::QUIET.store(false, std::sync::atomic::Ordering::Relaxed);
     let focus = focus_current()?;
     for app in &focus.apps {
         crate::memory_map::app_action(app, "resume");
@@ -556,6 +580,7 @@ pub fn focus_end() -> Option<Vec<String>> {
 
 /// Ends the session once its time is up. Called from the background loop.
 pub fn focus_tick(now: i64) {
+    crate::sys_util::QUIET.store(focus_current().is_some_and(|f| f.until > now), std::sync::atomic::Ordering::Relaxed);
     if focus_current().is_some_and(|f| f.until <= now) {
         if let Some(apps) = focus_end() {
             crate::sys_util::notify("Focus time is over", &format!("{} can run again.", apps.join(", ")), false);
@@ -650,6 +675,21 @@ mod tests {
         assert_eq!(unknown, 0, "unknown settings are ignored");
         assert!(import_settings(&db, "/etc/hostname").is_err());
         fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn read_only_program_cannot_write_to_home() {
+        let Some(home) = dirs::home_dir() else { return };
+        let marker = home.join(format!(".trace-ro-test-{}", std::process::id()));
+        let script = format!("touch '{}' 2>/dev/null && echo wrote || echo blocked; touch /tmp/x && echo tmp-ok", marker.display());
+        let wrapper = restricted_wrapper(true);
+        let Ok(out) = Command::new(wrapper[0]).args(&wrapper[1..]).args(["sh", "-c", &script]).output() else { return };
+        if !out.status.success() {
+            return; // unprivileged namespaces disabled here
+        }
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(text.contains("blocked") && text.contains("tmp-ok"), "{text}");
+        assert!(!marker.exists());
     }
 
     #[test]

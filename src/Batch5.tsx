@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { ActionResult, ConfirmButton, Segmented, StatusLine, bytesToHuman, formatDay, useAction, usePoll } from "./ui";
+import { ActionResult, ConfirmButton, Segmented, StatusLine, bytesToHuman, formatClock, formatDay, useAction, usePoll } from "./ui";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { AutoMaintenance, Equaliser } from "./Batch6";
 
 async function pickFolder(): Promise<string | null> {
   const path = await openDialog({ directory: true, multiple: false });
@@ -56,6 +57,7 @@ export function Maintenance() {
           {busy ? "Working… (asks for your password once)" : "Run maintenance now"}
         </button>
       </div>
+      <AutoMaintenance />
       {error && <p className="status-fail">✗ {error}</p>}
       {shown.map((line, i) => (
         <div key={i} className="plain-row">
@@ -64,8 +66,8 @@ export function Maintenance() {
       ))}
       <p className="diagnose-hint">
         Trims the drives, keeps the two newest versions of each package, cuts the system log to 500 MB, removes crash
-        dumps older than a week{s.docker ? " and clears unused Docker leftovers" : ""}. It needs your password, so Trace
-        reminds you when a week has passed rather than running it behind your back.
+        dumps older than a week{s.docker ? " and clears unused Docker leftovers" : ""}. Run by hand it asks for your
+        password each time and reminds you after a week; switched to run by itself it asks once.
       </p>
     </section>
   );
@@ -143,6 +145,7 @@ interface UpdateBrief {
   pacnew: string[];
   stale_apps: string[];
   can_open_terminal: boolean;
+  snapshot_tool: string;
 }
 
 /** What an update would change and what to know before running it. */
@@ -150,6 +153,7 @@ export function UpdateAssistant() {
   const [brief, setBrief] = useState<UpdateBrief | null>(null);
   const [busy, setBusy] = useState(false);
   const [diff, setDiff] = useState<{ path: string; text: string } | null>(null);
+  const [snapshot, setSnapshot] = useState(true);
   async function load() {
     setBusy(true);
     try {
@@ -174,11 +178,23 @@ export function UpdateAssistant() {
           {busy ? "Asking the mirrors…" : brief ? "Check again" : "Check what an update would do"}
         </button>
         {brief && brief.count > 0 && brief.can_open_terminal && (
-          <button className="ctl-btn" disabled={action.busy} onClick={() => action.run("open_update_terminal")}>
+          <button className="ctl-btn" disabled={action.busy} onClick={() => action.run("open_update_terminal", { snapshot: snapshot && !!brief.snapshot_tool })}>
             Update in a terminal
           </button>
         )}
       </div>
+      {brief && brief.count > 0 && (
+        <p className="diagnose-hint">
+          {brief.snapshot_tool ? (
+            <label>
+              <input type="checkbox" checked={snapshot} onChange={(e) => setSnapshot(e.target.checked)} /> Take a {brief.snapshot_tool} snapshot first, so the
+              update can be rolled back
+            </label>
+          ) : (
+            "No snapshot tool (Timeshift or Snapper) is installed, so there is no automatic way back if an update goes wrong. Installing Timeshift adds a snapshot step here."
+          )}
+        </p>
+      )}
       {brief && (
         <>
           <div className="finding">
@@ -448,13 +464,20 @@ export function Backups() {
   );
 }
 
+interface GameModeSettings {
+  enabled: boolean;
+  preset: string;
+  per_game: Record<string, string>;
+  seen: string[];
+}
+
 /** Apply a preset while a game runs and put everything back afterwards. */
 export function GameModeCard() {
-  const view = usePoll<{ mode: { enabled: boolean; preset: string }; running: string | null }>("get_game_mode", undefined, 15000);
+  const view = usePoll<{ mode: GameModeSettings; running: string | null }>("get_game_mode", undefined, 15000);
   const presets = usePoll<[string, string][]>("get_preset_names");
   if (!view.data) return null;
   const { mode, running } = view.data;
-  async function save(next: { enabled: boolean; preset: string }) {
+  async function save(next: GameModeSettings) {
     await invoke("set_game_mode", { mode: next });
     view.reload();
   }
@@ -476,19 +499,34 @@ export function GameModeCard() {
         </select>
         <Segmented options={["on", "off"]} value={mode.enabled ? "on" : "off"} disabled={!mode.preset} onChange={(v) => save({ ...mode, enabled: v === "on" })} />
       </div>
+      {mode.seen.map((game) => (
+        <div key={game} className="wifi-row">
+          <span className="wifi-name">{game}</span>
+          <select className="port-input" value={mode.per_game[game] ?? ""} aria-label={`Preset for ${game}`} onChange={(e) => save({ ...mode, per_game: { ...mode.per_game, [game]: e.target.value } })}>
+            <option value="">same as above</option>
+            {(presets.data ?? []).map(([id, name]) => (
+              <option key={id} value={id}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </div>
+      ))}
       <p className="diagnose-hint">
         {running ? `Running now: ${running}. ` : ""}
+        {mode.seen.length === 0 ? "Games get their own row here the first time Trace sees them run, so each can have its own preset. " : ""}
         Notices Steam and Proton games, Lutris and gamescope within a minute of starting. Parts of a preset that need
-        your password are skipped unless the trusted helper (Tweaks) is on. A frame-rate overlay is not included:
-        add <code>mangohud %command%</code> to the game's launch options for that.
+        your password are skipped unless the trusted helper (Tweaks) is on. For a frame-rate overlay, put{" "}
+        <code>mangohud %command%</code> in the game's launch options in Steam; MangoHud is already installed.
       </p>
     </section>
   );
 }
 
 interface GroupUse {
-  budget: { name: string; apps: string[]; max_gb: number; action: string };
+  budget: { name: string; apps: string[]; max_gb: number; action: string; max_cpu_percent: number };
   used_bytes: number;
+  cpu_percent: number;
 }
 
 /** One memory allowance shared by several apps. */
@@ -497,6 +535,7 @@ export function GroupBudgets({ apps }: { apps: string[] }) {
   const [name, setName] = useState("");
   const [chosen, setChosen] = useState<string[]>([]);
   const [gb, setGb] = useState("6");
+  const [cpu, setCpu] = useState("");
   const [action, setAction] = useState("notify");
   if (!groups.data) return null;
   async function save(budgets: GroupUse["budget"][]) {
@@ -506,23 +545,24 @@ export function GroupBudgets({ apps }: { apps: string[] }) {
   const current = groups.data.map((g) => g.budget);
   return (
     <section className="panel">
-      <h2>Memory Allowance For A Group</h2>
+      <h2>Allowance For A Group Of Apps</h2>
       {groups.data.map((g) => {
-        const share = Math.min(100, (g.used_bytes / (g.budget.max_gb * 1e9)) * 100);
+        const share = g.budget.max_gb > 0 ? Math.min(100, (g.used_bytes / (g.budget.max_gb * 1e9)) * 100) : Math.min(100, (g.cpu_percent / g.budget.max_cpu_percent) * 100);
         return (
           <div key={g.budget.name} className="bar-row">
             <span className="bar-label" title={g.budget.apps.join(", ")}>
+              <button className="link-button" title="Remove this group" onClick={() => save(current.filter((b) => b.name !== g.budget.name))}>
+                ×
+              </button>{" "}
               {g.budget.name}
             </span>
             <div className="bar-track">
               <div className={`bar-fill${share >= 100 ? " bar-over" : ""}`} style={{ width: `${share}%` }} />
             </div>
             <span className="bar-value" title={g.budget.action === "freeze" ? "Over the allowance, the heaviest app is frozen" : "Over the allowance, you get a notification"}>
-              {(g.used_bytes / 1e9).toFixed(1)}/{g.budget.max_gb} GB
+              {g.budget.max_gb > 0 ? `${(g.used_bytes / 1e9).toFixed(1)}/${g.budget.max_gb} GB` : ""}
+              {g.budget.max_cpu_percent > 0 ? ` ${g.cpu_percent.toFixed(0)}/${g.budget.max_cpu_percent}% CPU` : ""}
             </span>
-            <button className="chip chip-button" title="Remove this group" onClick={() => save(current.filter((b) => b.name !== g.budget.name))}>
-              ×
-            </button>
           </div>
         );
       })}
@@ -536,16 +576,18 @@ export function GroupBudgets({ apps }: { apps: string[] }) {
       <div className="control-actions">
         <input className="port-input" placeholder="group name, e.g. Browsers" value={name} onChange={(e) => setName(e.target.value)} />
         <input className="port-input number-box" aria-label="Allowance in GB" value={gb} onChange={(e) => setGb(e.target.value.replace(/[^\d.]/g, ""))} />
-        <span className="mem-muted">GB, then</span>
+        <span className="mem-muted">GB,</span>
+        <input className="port-input number-box" placeholder="CPU %" aria-label="Processor allowance in percent of one core" value={cpu} onChange={(e) => setCpu(e.target.value.replace(/\D/g, ""))} />
+        <span className="mem-muted">then</span>
         <select className="port-input" value={action} onChange={(e) => setAction(e.target.value)}>
           <option value="notify">tell me</option>
-          <option value="freeze">freeze the heaviest</option>
+          <option value="freeze">act (freeze heaviest / cap CPU)</option>
         </select>
         <button
           className="ctl-btn"
-          disabled={!name.trim() || chosen.length === 0 || !(parseFloat(gb) > 0)}
+          disabled={!name.trim() || chosen.length === 0 || !(parseFloat(gb) > 0 || parseInt(cpu) > 0)}
           onClick={() => {
-            save([...current.filter((b) => b.name !== name.trim()), { name: name.trim(), apps: chosen, max_gb: parseFloat(gb), action }]);
+            save([...current.filter((b) => b.name !== name.trim()), { name: name.trim(), apps: chosen, max_gb: parseFloat(gb) || 0, action, max_cpu_percent: parseInt(cpu) || 0 }]);
             setName("");
             setChosen([]);
           }}
@@ -553,7 +595,10 @@ export function GroupBudgets({ apps }: { apps: string[] }) {
           Add group
         </button>
       </div>
-      <p className="diagnose-hint">Checked once a minute. Over the allowance, Trace acts at most once every 15 minutes.</p>
+      <p className="diagnose-hint">
+        Memory in GB for the whole group, processor in percent of one core (200 = two cores); leave either empty.
+        Checked once a minute; over the allowance, Trace acts at most once every 15 minutes.
+      </p>
     </section>
   );
 }
@@ -618,6 +663,7 @@ export function AppMixer() {
         </label>
         <Segmented options={["on", "off"]} value={m.noise_suppression ? "on" : "off"} disabled={busy} onChange={(v) => run("set_noise_suppression", { on: v === "on" })} />
       </div>
+      <Equaliser onChange={() => mixer.reload()} />
       <StatusLine result={result} />
     </section>
   );
@@ -625,7 +671,8 @@ export function AppMixer() {
 
 /** Lift the charge limit for one charge, then put it back. */
 export function ChargeOnce() {
-  const status = usePoll<{ limit: number | null; restore_to: number | null }>("get_charge_once", undefined, 30000);
+  const status = usePoll<{ limit: number | null; restore_to: number | null; lift_at: number | null; ready_by: number | null }>("get_charge_once", undefined, 30000);
+  const [time, setTime] = useState("08:00");
   const { result, busy, run } = useAction(() => status.reload());
   const s = status.data;
   if (!s || s.limit == null) return null;
@@ -646,6 +693,26 @@ export function ChargeOnce() {
           </button>
         )}
       </div>
+      {s.restore_to == null && (
+        <div className="control-row">
+          <label>
+            {s.ready_by ? `Planned: full by ${formatClock(s.ready_by)}` : "…or have it full by"}
+            {s.lift_at && <span className="mem-muted"> — the limit lifts at {formatClock(s.lift_at)}</span>}
+          </label>
+          {s.ready_by ? (
+            <button className="ctl-btn" disabled={busy} onClick={() => run("plan_full_charge", { hour: null, minute: 0 })}>
+              Cancel
+            </button>
+          ) : (
+            <>
+              <input type="time" className="port-input" value={time} onChange={(e) => setTime(e.target.value)} aria-label="Time it should be full by" />
+              <button className="ctl-btn" disabled={busy} onClick={() => run("plan_full_charge", { hour: parseInt(time.slice(0, 2)), minute: parseInt(time.slice(3, 5)) })}>
+                Plan it
+              </button>
+            </>
+          )}
+        </div>
+      )}
       <StatusLine result={result} />
     </>
   );
@@ -671,8 +738,13 @@ function ColourRow({ monitor, onDone }: { monitor: MonitorColour; onDone: () => 
   const [mode, setMode] = useState(COLOUR_MODES.some(([m]) => m === monitor.mode) ? monitor.mode : "srgb");
   const [saturation, setSaturation] = useState(monitor.saturation);
   const [brightness, setBrightness] = useState(monitor.brightness);
+  const [icc, setIcc] = useState("");
   const { result, busy, run } = useAction(onDone);
-  const changed = mode !== monitor.mode || saturation !== monitor.saturation || brightness !== monitor.brightness;
+  const changed = mode !== monitor.mode || saturation !== monitor.saturation || brightness !== monitor.brightness || icc !== "";
+  async function pickProfile() {
+    const path = await openDialog({ multiple: false, filters: [{ name: "Colour profile", extensions: ["icc", "icm"] }] });
+    if (typeof path === "string") setIcc(path);
+  }
   return (
     <div className="finding">
       <strong>
@@ -692,10 +764,13 @@ function ColourRow({ monitor, onDone }: { monitor: MonitorColour; onDone: () => 
         <span className="mem-muted">Brightness</span>
         <input type="range" min={0.5} max={2} step={0.05} value={brightness} onChange={(e) => setBrightness(parseFloat(e.target.value))} aria-label="Brightness of normal content" />
         <span className="bar-value">{brightness.toFixed(2)}</span>
-        <button className="ctl-btn ctl-btn-sm" disabled={busy || !changed} onClick={() => run("set_monitor_colour", { name: monitor.name, mode, saturation, brightness })}>
+        <button className="ctl-btn ctl-btn-sm" disabled={busy || !changed} onClick={() => run("set_monitor_colour", { name: monitor.name, mode, saturation, brightness, icc })}>
           Apply
         </button>
-        <button className="ctl-btn ctl-btn-sm" disabled={busy} onClick={() => run("set_monitor_colour", { name: monitor.name, mode: "srgb", saturation: 1, brightness: 1 })}>
+        <button className="ctl-btn ctl-btn-sm" disabled={busy} onClick={pickProfile} title="Use a colour profile file (.icc) made for this panel">
+          {icc ? icc.split("/").pop() : "Profile…"}
+        </button>
+        <button className="ctl-btn ctl-btn-sm" disabled={busy} onClick={() => run("set_monitor_colour", { name: monitor.name, mode: "srgb", saturation: 1, brightness: 1, icc: "" })}>
           Reset
         </button>
       </div>
@@ -717,7 +792,8 @@ export function MonitorColours() {
       <p className="diagnose-hint">
         Wide colour and HDR switch the monitor to 10-bit and only look right on a panel that supports them; if the
         picture goes wrong, press Reset. Saturation and brightness apply to normal (non-HDR) content in those modes.
-        Changes last until you log out or reload Hyprland. Colour profile files (ICC) are not supported yet.
+        A colour profile (.icc file from the panel's maker or a calibration) can be loaded with “Profile…”. Changes
+        last until you log out or reload Hyprland, which also clears a loaded profile.
       </p>
     </section>
   );

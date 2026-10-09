@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { ConfirmButton, StatusLine, bytesToHuman, formatClock, formatDay, useAction, usePoll } from "./ui";
 import { WifiQr } from "./Batch4";
+import { GpuLoad, MediaHistory, VulnerablePackages } from "./Batch6";
 
 const LEVEL_MARK: Record<string, [string, string]> = {
   good: ["✓", "status-ok"],
@@ -12,7 +13,7 @@ const LEVEL_MARK: Record<string, [string, string]> = {
 };
 
 interface SecurityReport {
-  findings: { level: string; title: string; detail: string }[];
+  findings: { level: string; title: string; detail: string; fix: string; fix_label: string }[];
   failed_logins: string[];
 }
 
@@ -20,6 +21,7 @@ interface SecurityReport {
 export function SecurityCheckup() {
   const [report, setReport] = useState<SecurityReport | null>(null);
   const [busy, setBusy] = useState(false);
+  const fix = useAction(() => run());
   async function run() {
     setBusy(true);
     try {
@@ -39,7 +41,7 @@ export function SecurityCheckup() {
       {!report && (
         <p className="diagnose-hint">
           Looks at the firewall, programs listening on the network, SSH, disk encryption, Secure Boot and failed
-          logins. It only reads; nothing is changed.
+          logins. Checking changes nothing; where Trace can fix something, a button appears next to it.
         </p>
       )}
       {report?.findings.map((f) => {
@@ -50,9 +52,16 @@ export function SecurityCheckup() {
               {mark} {f.title}
             </strong>
             {f.detail && <span className="mem-muted">{f.detail}</span>}
+            {f.fix && (
+              <div className="control-actions">
+                <ConfirmButton className="ctl-btn ctl-btn-sm" label={f.fix_label} confirmLabel="Asks for your password — go ahead?" disabled={fix.busy} onConfirm={() => fix.run("apply_security_fix", { id: f.fix })} />
+              </div>
+            )}
           </div>
         );
       })}
+      <StatusLine result={fix.result} />
+      {report && <VulnerablePackages />}
       {report && report.failed_logins.length > 0 && (
         <>
           <h3 className="sub-heading">Failed logins, last 7 days</h3>
@@ -88,7 +97,7 @@ export function MediaUseCard() {
       <h2>Microphone & Camera</h2>
       {row("Microphone", data.microphone)}
       {row("Camera", data.camera)}
-      <p className="diagnose-hint">Checked every few seconds while this page is open.</p>
+      <MediaHistory />
     </section>
   );
 }
@@ -216,6 +225,7 @@ export function PrivacyCleaner() {
 export function RunRestricted() {
   const [command, setCommand] = useState("");
   const [noNetwork, setNoNetwork] = useState(true);
+  const [readOnly, setReadOnly] = useState(false);
   const [memory, setMemory] = useState("");
   const [cpu, setCpu] = useState("");
   const { result, busy, run } = useAction();
@@ -233,6 +243,9 @@ export function RunRestricted() {
       <div className="control-row">
         <label>
           <input type="checkbox" checked={noNetwork} onChange={(e) => setNoNetwork(e.target.checked)} /> No network at all
+        </label>
+        <label>
+          <input type="checkbox" checked={readOnly} onChange={(e) => setReadOnly(e.target.checked)} /> Can't change any file
         </label>
         <input
           className="port-input number-box"
@@ -255,6 +268,7 @@ export function RunRestricted() {
             run("run_restricted", {
               command,
               noNetwork,
+              readOnly,
               memoryMb: memory ? parseInt(memory) : null,
               cpuPercent: cpu ? parseInt(cpu) : null,
             })
@@ -267,7 +281,7 @@ export function RunRestricted() {
       <p className="diagnose-hint">
         For tools you don't fully trust. "No network" gives the program an empty network of its own, so it can't reach
         the internet or your local machines. The memory limit is a hard stop (the program is ended if it goes over);
-        CPU is in percent of one core, so 200 means two cores. It can still read and write your files.
+        CPU is in percent of one core, so 200 means two cores. “Can't change any file” lets it read everything but write only to a throwaway /tmp of its own; programs that need to save settings may refuse to start that way.
       </p>
     </section>
   );
@@ -288,6 +302,7 @@ export function StressTest() {
   const [seconds, setSeconds] = useState(30);
   const [result, setResult] = useState<StressResult | null>(null);
   const [left, setLeft] = useState(0);
+  const [graphics, setGraphics] = useState(false);
   useEffect(() => {
     if (left <= 0) return;
     const t = setTimeout(() => setLeft(left - 1), 1000);
@@ -315,7 +330,11 @@ export function StressTest() {
         <button className="ctl-btn ctl-primary" onClick={run} disabled={busy}>
           {busy ? `Running at full load… ${left}s` : result ? "Run again" : "Run every core flat out"}
         </button>
+        <label className="mem-muted">
+          <input type="checkbox" checked={graphics} disabled={busy} onChange={(e) => setGraphics(e.target.checked)} /> load the graphics chip too
+        </label>
       </div>
+      {busy && graphics && <GpuLoad />}
       {result && (
         <>
           <div className="explain">

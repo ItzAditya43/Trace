@@ -2633,3 +2633,60 @@ code {
 .usb-row .chip {
   width: auto;
 }
+
+/* ---- hour strip, graphics load, card chooser ---- */
+.hour-strip {
+  align-items: flex-end;
+  display: grid;
+  gap: 3px;
+  grid-template-columns: repeat(24, 1fr);
+  height: 84px;
+}
+
+.hour-cell {
+  background: #161922;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  justify-content: flex-end;
+  padding: 0;
+  position: relative;
+}
+
+.hour-picked {
+  border-color: #4f7fe0;
+}
+
+.hour-fill {
+  background: #4f7fe0;
+  border-radius: 3px 3px 0 0;
+  display: block;
+  min-height: 0;
+}
+
+.hour-label {
+  bottom: 2px;
+  color: #8a90a0;
+  font-size: 10px;
+  left: 0;
+  pointer-events: none;
+  position: absolute;
+  right: 0;
+  text-align: center;
+}
+
+.gpu-load {
+  border-radius: 6px;
+  display: block;
+  height: 140px;
+  margin: 8px 0;
+  width: 100%;
+}
+
+.card-chooser {
+  flex: 1 1 100%;
+  text-align: center;
+}

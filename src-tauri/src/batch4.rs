@@ -100,7 +100,7 @@ pub struct PowerReport {
     pub apps: Vec<AppPower>,
 }
 
-fn cpu_ticks_by_app() -> (HashMap<String, u64>, u64) {
+pub(crate) fn cpu_ticks_by_app() -> (HashMap<String, u64>, u64) {
     let mut by_app: HashMap<String, u64> = HashMap::new();
     if let Ok(dir) = fs::read_dir("/proc") {
         for entry in dir.flatten() {
@@ -216,6 +216,12 @@ fn sound_playing() -> bool {
         .ok()
         .and_then(|v| v.as_array().map(|list| list.iter().any(|i| i["corked"].as_bool() == Some(false))))
         .unwrap_or(false)
+}
+
+/// True once nobody has touched the pointer or keyboard for five minutes.
+pub fn is_away(now: i64) -> bool {
+    let idle = IDLE.lock().unwrap();
+    idle.last_active != 0 && now - idle.last_active >= AWAY_AFTER_SECS
 }
 
 // ---- what grew on the disk ----
@@ -575,12 +581,19 @@ pub fn connections(db: &Db, now: i64) -> Vec<AppPeers> {
     list
 }
 
-/// The name behind an address, if it has one.
+/// The name behind an address and the country it is registered in, where known.
 pub fn host_name(ip: &str) -> String {
     if ip.parse::<std::net::IpAddr>().is_err() {
         return String::new();
     }
-    run_lossy(Command::new("timeout").args(["3", "getent", "hosts", ip])).split_whitespace().nth(1).unwrap_or("").to_string()
+    let name = run_lossy(Command::new("timeout").args(["3", "getent", "hosts", ip])).split_whitespace().nth(1).unwrap_or("").to_string();
+    let country = crate::batch6::host_country(ip);
+    match (name.is_empty(), country.is_empty()) {
+        (false, false) => format!("{name} · {country}"),
+        (false, true) => name,
+        (true, false) => format!("registered in {country}"),
+        (true, true) => String::new(),
+    }
 }
 
 // ---- what is this? ----

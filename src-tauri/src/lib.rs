@@ -4,6 +4,7 @@ mod autostart;
 mod batch3;
 mod batch4;
 mod batch5;
+mod batch6;
 mod connectivity;
 mod control_process;
 mod db;
@@ -1800,8 +1801,8 @@ fn resolve_pacnew(state: tauri::State<AppState>, path: String, use_new: bool) ->
 }
 
 #[tauri::command(async)]
-fn open_update_terminal(state: tauri::State<AppState>) -> control_process::ActionResult {
-    logged(&state, "open_update_terminal", batch5::open_update_terminal())
+fn open_update_terminal(state: tauri::State<AppState>, snapshot: bool) -> control_process::ActionResult {
+    logged(&state, "open_update_terminal", batch5::open_update_terminal(snapshot))
 }
 
 #[tauri::command(async)]
@@ -1855,7 +1856,7 @@ fn set_game_mode(mode: batch5::GameMode) {
 #[tauri::command(async)]
 fn get_group_budgets() -> Vec<batch5::GroupUse> {
     let apps: Vec<(String, u64)> = memory_map::breakdown().apps.iter().map(|a| (a.name.clone(), a.ram_bytes + a.swap_bytes)).collect();
-    batch5::group_use(&apps)
+    batch5::group_use(&apps, &batch5::app_cpu())
 }
 
 #[tauri::command(async)]
@@ -1900,13 +1901,128 @@ fn get_monitor_colours() -> Vec<batch5::MonitorColour> {
 }
 
 #[tauri::command(async)]
-fn set_monitor_colour(state: tauri::State<AppState>, name: String, mode: String, saturation: f64, brightness: f64) -> control_process::ActionResult {
-    logged(&state, &format!("monitor_colour:{name}"), batch5::set_monitor_colour(&name, &mode, saturation, brightness))
+fn set_monitor_colour(state: tauri::State<AppState>, name: String, mode: String, saturation: f64, brightness: f64, icc: String) -> control_process::ActionResult {
+    logged(&state, &format!("monitor_colour:{name}"), batch5::set_monitor_colour(&name, &mode, saturation, brightness, &icc))
 }
 
 #[tauri::command(async)]
 fn get_preset_names(state: tauri::State<AppState>) -> Vec<(String, String)> {
     tweak_presets::list(&tweaks::list(&state.db)).into_iter().map(|p| (p.id, p.name)).collect()
+}
+
+#[tauri::command(async)]
+fn get_screen_day(state: tauri::State<AppState>, day_offset: i64) -> batch6::ScreenDay {
+    batch6::screen_day(&state.db, chrono_now(), day_offset)
+}
+
+#[tauri::command(async)]
+fn get_media_history(state: tauri::State<AppState>) -> Vec<batch6::MediaEvent> {
+    batch6::media_history(&state.db)
+}
+
+#[tauri::command(async)]
+fn apply_security_fix(state: tauri::State<AppState>, id: String) -> control_process::ActionResult {
+    logged(&state, &format!("security_fix:{id}"), batch6::security_fix(&id))
+}
+
+#[tauri::command(async)]
+fn get_vulnerable_packages() -> Result<Vec<batch6::Vulnerable>, String> {
+    batch6::vulnerable_packages()
+}
+
+#[derive(Serialize)]
+struct ExtrasView {
+    extras: batch6::Extras,
+    phones: Vec<batch6::Phone>,
+    has_kbd_light: bool,
+}
+
+#[tauri::command(async)]
+fn get_extras() -> ExtrasView {
+    ExtrasView { extras: batch6::extras(), phones: batch6::phones(), has_kbd_light: batch6::has_kbd_light() }
+}
+
+#[tauri::command(async)]
+fn save_extras(extras: batch6::Extras) {
+    // The digest bookkeeping belongs to the background loop, not the form.
+    let digest_week = batch6::extras().digest_week;
+    batch6::save_extras(&batch6::Extras { digest_week, ..extras })
+}
+
+#[tauri::command(async)]
+fn test_phone_alert() -> control_process::ActionResult {
+    match batch6::send_to_phones("Trace: test alert — this is what you'd get while away.") {
+        0 => sys_util::err("No paired phone is reachable. Pair one in KDE Connect first."),
+        n => sys_util::ok(format!("Sent to {n} phone(s)")),
+    }
+}
+
+#[tauri::command(async)]
+fn get_wifi_signal(state: tauri::State<AppState>) -> Vec<(i64, i64)> {
+    batch6::wifi_history(&state.db, chrono_now())
+}
+
+#[derive(Serialize)]
+struct EqView {
+    current: String,
+    presets: Vec<(String, String)>,
+}
+
+#[tauri::command(async)]
+fn get_equaliser() -> EqView {
+    EqView { current: batch6::eq_current(), presets: batch6::EQ_PRESETS.iter().map(|p| (p.0.to_string(), p.1.to_string())).collect() }
+}
+
+#[tauri::command(async)]
+fn set_equaliser(state: tauri::State<AppState>, preset: String) -> control_process::ActionResult {
+    logged(&state, "equaliser", batch6::set_eq(&preset))
+}
+
+#[tauri::command(async)]
+fn get_auto_maintenance() -> batch6::AutoMaintenance {
+    batch6::auto_maintenance()
+}
+
+#[tauri::command(async)]
+fn set_auto_maintenance(state: tauri::State<AppState>, on: bool) -> control_process::ActionResult {
+    logged(&state, "auto_maintenance", batch6::set_auto_maintenance(on))
+}
+
+#[tauri::command(async)]
+fn get_erasable_drives() -> Vec<batch6::ErasableDrive> {
+    batch6::erasable_drives()
+}
+
+#[tauri::command(async)]
+fn secure_erase(state: tauri::State<AppState>, device: String, typed: String) -> control_process::ActionResult {
+    logged(&state, &format!("secure_erase:{device}"), batch6::secure_erase(&device, &typed))
+}
+
+#[tauri::command(async)]
+fn plan_full_charge(state: tauri::State<AppState>, hour: Option<u32>, minute: u32) -> control_process::ActionResult {
+    let r = match hour {
+        Some(hour) => batch5::charge_plan(hour, minute, chrono_now()),
+        None => batch5::charge_plan_cancel(),
+    };
+    logged(&state, "plan_full_charge", r)
+}
+
+#[tauri::command(async)]
+fn apply_preset_by_id(state: tauri::State<AppState>, id: String) -> control_process::ActionResult {
+    let Some(changes) = tweak_presets::changes_for(&id, &tweaks::list(&state.db)) else {
+        return sys_util::err(format!("No preset called {id}"));
+    };
+    if changes.is_empty() {
+        return sys_util::ok(format!("{id}: everything was already set"));
+    }
+    let results = tweaks::apply(&state.db, &changes, &format!("preset:{id}"), None);
+    log_tweak_results(&state, "set-up", &results);
+    let failed = results.iter().filter(|r| !r.ok).count();
+    if failed == 0 {
+        sys_util::ok(format!("{id}: {} setting(s) applied", results.len()))
+    } else {
+        sys_util::err(format!("{id}: {} applied, {failed} failed", results.len() - failed))
+    }
 }
 
 #[tauri::command(async)]
@@ -1968,10 +2084,11 @@ fn run_restricted(
     state: tauri::State<AppState>,
     command: String,
     no_network: bool,
+    read_only: bool,
     memory_mb: Option<u64>,
     cpu_percent: Option<u32>,
 ) -> control_process::ActionResult {
-    logged(&state, "run_restricted", batch3::run_restricted(&command, no_network, memory_mb, cpu_percent))
+    logged(&state, "run_restricted", batch3::run_restricted(&command, no_network, read_only, memory_mb, cpu_percent))
 }
 
 #[tauri::command(async)]
@@ -2150,7 +2267,9 @@ fn handle_cli(app: &tauri::AppHandle, args: &[String]) -> bool {
             false
         }
         ["page", page] => {
-            app.emit("navigate", serde_json::json!({ "page": page })).ok();
+            // "control:network" opens a page at one of its sections.
+            let (page, section) = page.split_once(':').unwrap_or((page, ""));
+            app.emit("navigate", serde_json::json!({ "page": page, "section": section })).ok();
             true
         }
         ["panic"] => {
@@ -2746,14 +2865,22 @@ fn background_tick(state: &AppState, snap: &Snapshot, tick: u64) {
     logbook::flush_notifications(&state.db);
 
     // Screen time only counts while someone is actually there.
-    if batch4::user_present(now) {
+    let present = batch4::user_present(now);
+    if present {
         if let Some(app) = logbook::focused_app() {
             logbook::record_focus(&state.db, now, TICK_SECS as i64, &app);
+            batch6::record_focus_hour(&state.db, now, TICK_SECS as i64, &app);
         }
+    }
+    if tick % 6 == 0 {
+        batch6::media_tick(&state.db, now);
+        batch6::wifi_tick(&state.db, now);
+        batch6::wellbeing_tick(&state.db, now, present);
+        batch6::phone_tick(batch4::is_away(now));
     }
     batch4::record_power(&state.db, now, snap.cpu_usage_percent);
     batch4::store_folder_snapshot(&state.db);
-    if let Some((ok, message)) = batch5::charge_tick(&state.db) {
+    if let Some((ok, message)) = batch5::charge_tick(&state.db, now) {
         log_action(state, "full_charge_once", ok, &message);
     }
 
@@ -2885,6 +3012,7 @@ pub fn run() {
             extras::recover_frozen();
             // A focus session that outlived the last run: wake its apps if the time has passed.
             batch3::focus_tick(chrono_now());
+            std::thread::spawn(batch6::kbd_light_loop);
             let sleeper_handle = app.handle().clone();
             std::thread::spawn(move || loop {
                 std::thread::sleep(std::time::Duration::from_secs(1));
@@ -2910,6 +3038,7 @@ pub fn run() {
                     tweaks::init(&state.db);
                     more::init(&state.db);
                     batch4::init(&state.db);
+                    batch6::init(&state.db);
                     tweaks::reapply_session(&state.db);
                     state.db.prune_app_memory(chrono_now() - 14 * 86_400);
                     logbook::prune_raw(&state.db, chrono_now() - 90 * 86_400);
@@ -2994,6 +3123,22 @@ pub fn run() {
             scan_folder_sizes,
             get_memory_breakdown,
             get_security_report,
+            apply_preset_by_id,
+            get_screen_day,
+            get_media_history,
+            apply_security_fix,
+            get_vulnerable_packages,
+            get_extras,
+            save_extras,
+            test_phone_alert,
+            get_wifi_signal,
+            get_equaliser,
+            set_equaliser,
+            get_auto_maintenance,
+            set_auto_maintenance,
+            get_erasable_drives,
+            secure_erase,
+            plan_full_charge,
             get_preset_names,
             open_mini,
             get_power_report,
@@ -3213,6 +3358,7 @@ mod tests {
         logbook::init(&state.db);
         tweaks::init(&state.db);
         batch4::init(&state.db);
+        batch6::init(&state.db);
         logbook::ingest_crashes(&state.db, false);
         logbook::ingest_power_events(&state.db, false);
         logbook::ingest_packages(&state.db);
@@ -3286,6 +3432,11 @@ mod tests {
         dump("list_timers", json(&extras::timers()));
         dump("get_ports", json(&hardware::ports()));
         dump("get_security_report", json(&batch3::security_report()));
+        dump("get_screen_day", json(&batch6::screen_day(&state.db, chrono_now(), 0)));
+        dump("get_media_history", json(&batch6::media_history(&state.db)));
+        dump("get_vulnerable_packages", json(&batch6::vulnerable_packages().ok()));
+        dump("get_erasable_drives", json(&batch6::erasable_drives()));
+        dump("get_auto_maintenance", json(&batch6::auto_maintenance()));
         dump("get_power_report", json(&batch4::power_report(&state.db)));
         dump("get_folder_growth", json(&batch4::folder_growth(&state.db, None)));
         dump("get_access_log", json(&batch4::access_log()));

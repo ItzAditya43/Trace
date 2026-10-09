@@ -4,6 +4,7 @@ import { Sparkline, bytesToHuman, formatDay, usePoll } from "./ui";
 import { BatteryCareCard } from "./More";
 import { MediaUseCard, SecurityCheckup } from "./Batch3";
 import { DiskGrowth, DriveWear, PowerPerApp } from "./Batch4";
+import { SecureErase } from "./Batch6";
 
 interface Issue {
   severity: "critical" | "warn" | "info";
@@ -339,6 +340,7 @@ export default function Health() {
       <BatteryCareCard />
       <PowerPerApp />
       <DiskGrowth />
+      <SecureErase />
       <SecurityCheckup />
       <MediaUseCard />
 

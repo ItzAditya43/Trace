@@ -262,6 +262,8 @@ pub struct UpdateBrief {
     /// Running apps still using files an update has replaced.
     pub stale_apps: Vec<String>,
     pub can_open_terminal: bool,
+    /// "timeshift" | "snapper" | "" — what can take an undo point first.
+    pub snapshot_tool: String,
 }
 
 const REBOOT_PREFIXES: &[&str] = &["linux", "nvidia", "systemd", "glibc", "amd-ucode", "intel-ucode", "mesa", "wayland", "hyprland", "pipewire", "dbus"];
@@ -314,6 +316,10 @@ fn stale_apps() -> Vec<String> {
     apps
 }
 
+fn snapshot_tool() -> &'static str {
+    ["timeshift", "snapper"].into_iter().find(|t| has_tool(t)).unwrap_or("")
+}
+
 fn terminal() -> Option<&'static str> {
     ["kitty", "foot", "alacritty", "ghostty", "wezterm", "konsole"].into_iter().find(|t| has_tool(t))
 }
@@ -330,7 +336,7 @@ pub fn update_brief() -> UpdateBrief {
     let big = pending.iter().filter(|p| ["brave", "firefox", "chromium", "zen", "code", "discord", "steam", "quickshell"].iter().any(|b| p.starts_with(b))).cloned().collect();
     let feed = run_lossy(Command::new("curl").args(["-s", "-m", "8", "https://archlinux.org/feeds/news/"]));
     let pacnew = run_lossy(Command::new("find").args(["/etc", "-xdev", "-name", "*.pacnew", "-type", "f"])).lines().filter(|l| safe_path(l)).map(String::from).collect();
-    UpdateBrief { count: pending.len(), needs_reboot, big, news: parse_news(&feed), pacnew, stale_apps: stale_apps(), can_open_terminal: terminal().is_some() }
+    UpdateBrief { count: pending.len(), needs_reboot, big, news: parse_news(&feed), pacnew, stale_apps: stale_apps(), can_open_terminal: terminal().is_some(), snapshot_tool: snapshot_tool().to_string() }
 }
 
 fn pacnew_pair(path: &str) -> Result<(String, String), String> {
@@ -370,11 +376,17 @@ pub fn pacnew_resolve(path: &str, use_new: bool) -> ActionResult {
 }
 
 /// Opens a terminal running the system update, so you see and answer its questions yourself.
-pub fn open_update_terminal() -> ActionResult {
+pub fn open_update_terminal(snapshot: bool) -> ActionResult {
     let Some(term) = terminal() else {
         return err("No terminal found to run the update in");
     };
-    let script = "sudo pacman -Syu; echo; echo 'Finished. Press Enter to close.'; read _";
+    let before = match (snapshot, snapshot_tool()) {
+        (true, "timeshift") => "sudo timeshift --create --comments 'before update (Trace)' && ",
+        (true, "snapper") => "sudo snapper create --description 'before update (Trace)' && ",
+        _ => "",
+    };
+    let script = format!("{before}sudo pacman -Syu; echo; echo 'Finished. Press Enter to close.'; read _");
+    let script = script.as_str();
     let mut cmd = Command::new(term);
     if term == "wezterm" {
         cmd.args(["start", "--"]);
@@ -810,6 +822,12 @@ pub struct GameMode {
     pub enabled: bool,
     /// Preset id from Tweaks, applied while a game runs.
     pub preset: String,
+    /// A different preset for particular games, by game name.
+    #[serde(default)]
+    pub per_game: HashMap<String, String>,
+    /// Games noticed so far, so they can be given their own preset.
+    #[serde(default)]
+    pub seen: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -867,6 +885,13 @@ pub fn game_tick(db: &Db) -> Option<(bool, String)> {
     let game = if mode.enabled { running_game() } else { None };
     match (active, game) {
         (None, Some(game)) => {
+            let mut mode = mode;
+            if !mode.seen.contains(&game) {
+                mode.seen.push(game.clone());
+                set_game_mode(&mode);
+            }
+            let preset = mode.per_game.get(&game).filter(|p| !p.is_empty()).unwrap_or(&mode.preset).clone();
+            let mode = GameMode { preset, ..mode };
             let changes = crate::tweak_presets::changes_for(&mode.preset, &crate::tweaks::list(db))?;
             let results = crate::tweaks::apply_with(db, &changes, &format!("game:{game}"), None, false);
             let restore: Vec<Change> = results.iter().filter(|r| r.ok).map(|r| Change { id: r.id.clone(), value: r.old_value.clone() }).collect();
@@ -892,14 +917,18 @@ pub struct GroupBudget {
     pub name: String,
     pub apps: Vec<String>,
     pub max_gb: f64,
-    /// "notify" | "freeze" (freezes the heaviest member)
+    /// "notify" | "freeze" (freezes the heaviest member; for CPU, caps every member)
     pub action: String,
+    /// Processor allowance for the whole group in percent of one core (200 = two cores); 0 = none.
+    #[serde(default)]
+    pub max_cpu_percent: f64,
 }
 
 #[derive(Serialize)]
 pub struct GroupUse {
     pub budget: GroupBudget,
     pub used_bytes: u64,
+    pub cpu_percent: f64,
 }
 
 pub fn group_budgets() -> Vec<GroupBudget> {
@@ -907,14 +936,38 @@ pub fn group_budgets() -> Vec<GroupBudget> {
 }
 
 pub fn save_group_budgets(budgets: &[GroupBudget]) {
-    let clean: Vec<&GroupBudget> = budgets.iter().filter(|b| !b.name.trim().is_empty() && !b.apps.is_empty() && b.max_gb > 0.0).collect();
+    let clean: Vec<&GroupBudget> = budgets.iter().filter(|b| !b.name.trim().is_empty() && !b.apps.is_empty() && (b.max_gb > 0.0 || b.max_cpu_percent > 0.0)).collect();
     save_json("group-budgets.json", &clean);
 }
 
-pub fn group_use(apps: &[(String, u64)]) -> Vec<GroupUse> {
+static CPU_PREV: Mutex<Option<(std::time::Instant, HashMap<String, u64>)>> = Mutex::new(None);
+
+/// Processor use per app since the last call, in percent of one core.
+/// Empty on the first call (there is nothing to compare with yet).
+pub fn app_cpu() -> HashMap<String, f64> {
+    let (ticks, _) = crate::batch4::cpu_ticks_by_app();
+    let now = std::time::Instant::now();
+    let mut prev = CPU_PREV.lock().unwrap();
+    let usage = match prev.as_ref() {
+        Some((then, before)) => {
+            let secs = now.duration_since(*then).as_secs_f64().max(1.0);
+            // The kernel counts processor time in hundredths of a second.
+            ticks.iter().map(|(app, t)| (app.clone(), t.saturating_sub(*before.get(app).unwrap_or(t)) as f64 / secs)).collect()
+        }
+        None => HashMap::new(),
+    };
+    *prev = Some((now, ticks));
+    usage
+}
+
+pub fn group_use(apps: &[(String, u64)], cpu: &HashMap<String, f64>) -> Vec<GroupUse> {
     group_budgets()
         .into_iter()
-        .map(|budget| GroupUse { used_bytes: apps.iter().filter(|(name, _)| budget.apps.contains(name)).map(|(_, b)| *b).sum(), budget })
+        .map(|budget| GroupUse {
+            used_bytes: apps.iter().filter(|(name, _)| budget.apps.contains(name)).map(|(_, b)| *b).sum(),
+            cpu_percent: budget.apps.iter().filter_map(|a| cpu.get(a)).sum(),
+            budget,
+        })
         .collect()
 }
 
@@ -925,20 +978,52 @@ pub fn group_tick(apps: &[(String, u64)], now: i64) -> Vec<(bool, String)> {
     let mut log = Vec::new();
     let mut alerted = GROUP_ALERTED.lock().unwrap();
     let alerted = alerted.get_or_insert_with(HashMap::new);
-    for usage in group_use(apps) {
-        let limit = (usage.budget.max_gb * 1e9) as u64;
-        if usage.used_bytes <= limit {
-            alerted.remove(&usage.budget.name);
+    let cpu = if group_budgets().iter().any(|b| b.max_cpu_percent > 0.0) { app_cpu() } else { HashMap::new() };
+    for usage in group_use(apps, &cpu) {
+        let budget = &usage.budget;
+        let members: Vec<&String> = apps.iter().map(|(n, _)| n).filter(|n| budget.apps.contains(n)).collect();
+
+        // Processor allowance.
+        let cpu_key = format!("{}:cpu", budget.name);
+        if budget.max_cpu_percent > 0.0 && usage.cpu_percent > budget.max_cpu_percent {
+            if !alerted.get(&cpu_key).is_some_and(|last| now - last < 900) {
+                alerted.insert(cpu_key, now);
+                let action = if budget.action == "freeze" && !members.is_empty() {
+                    // An even share each, so the group as a whole can't exceed its allowance.
+                    let share = ((budget.max_cpu_percent / members.len() as f64) as u32).max(5);
+                    for app in &members {
+                        let memory = crate::memory_map::app_limits(app).memory_mb;
+                        crate::memory_map::set_app_limits(app, Some(share), memory);
+                    }
+                    format!("capped each of its apps at {share}% of a core")
+                } else {
+                    "told you".to_string()
+                };
+                notify(
+                    &format!("“{}” is over its processor allowance", budget.name),
+                    &format!("Using {:.0}% of a core; the allowance is {:.0}%. Trace {action}.", usage.cpu_percent, budget.max_cpu_percent),
+                    false,
+                );
+                log.push((true, format!("group {} over its processor allowance ({:.0}% of {:.0}%): {action}", budget.name, usage.cpu_percent, budget.max_cpu_percent)));
+            }
+        } else {
+            alerted.remove(&cpu_key);
+        }
+
+        // Memory allowance.
+        let limit = (budget.max_gb * 1e9) as u64;
+        if limit == 0 || usage.used_bytes <= limit {
+            alerted.remove(&budget.name);
             continue;
         }
         // Once per quarter of an hour, not on every check.
-        if alerted.get(&usage.budget.name).is_some_and(|last| now - last < 900) {
+        if alerted.get(&budget.name).is_some_and(|last| now - last < 900) {
             continue;
         }
-        alerted.insert(usage.budget.name.clone(), now);
+        alerted.insert(budget.name.clone(), now);
         let used_gb = usage.used_bytes as f64 / 1e9;
-        let heaviest = apps.iter().filter(|(n, _)| usage.budget.apps.contains(n)).max_by_key(|(_, b)| *b).map(|(n, _)| n.clone());
-        let (did_ok, action) = match (usage.budget.action.as_str(), heaviest) {
+        let heaviest = apps.iter().filter(|(n, _)| budget.apps.contains(n)).max_by_key(|(_, b)| *b).map(|(n, _)| n.clone());
+        let (did_ok, action) = match (budget.action.as_str(), heaviest) {
             ("freeze", Some(app)) => {
                 let r = crate::memory_map::app_action(&app, "freeze");
                 (r.ok, format!("froze {app}"))
@@ -946,11 +1031,11 @@ pub fn group_tick(apps: &[(String, u64)], now: i64) -> Vec<(bool, String)> {
             _ => (true, "told you".to_string()),
         };
         notify(
-            &format!("“{}” is over its memory allowance", usage.budget.name),
-            &format!("Using {used_gb:.1} GB of {:.1} GB. Trace {action}.", usage.budget.max_gb),
+            &format!("“{}” is over its memory allowance", budget.name),
+            &format!("Using {used_gb:.1} GB of {:.1} GB. Trace {action}.", budget.max_gb),
             false,
         );
-        log.push((did_ok, format!("group {} over budget ({used_gb:.1} of {:.1} GB): {action}", usage.budget.name, usage.budget.max_gb)));
+        log.push((did_ok, format!("group {} over budget ({used_gb:.1} of {:.1} GB): {action}", budget.name, budget.max_gb)));
     }
     log
 }
@@ -1109,6 +1194,9 @@ pub struct ChargeOnce {
     pub limit: Option<u32>,
     /// Set while a one-off full charge is under way: the limit to go back to.
     pub restore_to: Option<u32>,
+    /// A full charge planned for later: when the limit will be lifted, and when it should be full.
+    pub lift_at: Option<i64>,
+    pub ready_by: Option<i64>,
 }
 
 fn charge_limit() -> Option<u32> {
@@ -1117,19 +1205,53 @@ fn charge_limit() -> Option<u32> {
 }
 
 pub fn charge_once_status() -> ChargeOnce {
-    ChargeOnce { limit: charge_limit(), restore_to: load_json::<Option<u32>>("charge-once.json") }
+    let plan: Option<(i64, i64)> = load_json("charge-plan.json");
+    ChargeOnce { limit: charge_limit(), restore_to: load_json::<Option<u32>>("charge-once.json"), lift_at: plan.map(|p| p.0), ready_by: plan.map(|p| p.1) }
 }
 
 /// Lifts the charge limit to 100% for one charge (asks for the password
 /// unless the trusted helper is on). `charge_tick` puts it back.
 pub fn charge_once_start(db: &Db) -> ActionResult {
+    fs::remove_file(data_dir().join("charge-plan.json")).ok();
+    charge_once_start_with(db, true)
+}
+
+/// How long before the deadline the limit is lifted: enough to fill the
+/// last stretch at the slow rate batteries charge near full.
+const CHARGE_LEAD_SECS: i64 = 150 * 60;
+
+/// Plans a full charge to be ready at the next `hour:minute`.
+pub fn charge_plan(hour: u32, minute: u32, now: i64) -> ActionResult {
+    let Some(limit) = charge_limit() else {
+        return err("This battery has no charge limit");
+    };
+    if limit >= 100 || hour > 23 || minute > 59 {
+        return err("There is no charge limit set, so it already charges to full");
+    }
+    let offset = crate::batch6::utc_offset();
+    let local = now + offset;
+    let mut ready_local = local - local.rem_euclid(86_400) + hour as i64 * 3600 + minute as i64 * 60;
+    if ready_local <= local + 600 {
+        ready_local += 86_400;
+    }
+    let ready_by = ready_local - offset;
+    save_json("charge-plan.json", &Some(((ready_by - CHARGE_LEAD_SECS).max(now), ready_by)));
+    ok(format!("Planned: the {limit}% limit lifts about two and a half hours before {hour:02}:{minute:02}. Leave it plugged in. This needs the trusted helper (Tweaks) to happen without you; otherwise Trace will ask you at that moment."))
+}
+
+pub fn charge_plan_cancel() -> ActionResult {
+    fs::remove_file(data_dir().join("charge-plan.json")).ok();
+    ok("Planned full charge cancelled")
+}
+
+fn charge_once_start_with(db: &Db, allow_root: bool) -> ActionResult {
     let Some(limit) = charge_limit() else {
         return err("This battery has no charge limit");
     };
     if limit >= 100 {
         return err("There is no charge limit set, so it already charges to full");
     }
-    let results = crate::tweaks::apply(db, &[Change { id: "battery.charge_limit".into(), value: "100".into() }], "full charge once", None);
+    let results = crate::tweaks::apply_with(db, &[Change { id: "battery.charge_limit".into(), value: "100".into() }], "full charge once", None, allow_root);
     match results.first() {
         Some(r) if r.ok => {
             save_json("charge-once.json", &Some(limit));
@@ -1141,7 +1263,17 @@ pub fn charge_once_start(db: &Db) -> ActionResult {
 }
 
 /// Puts the limit back once the battery is full or the charger was pulled.
-pub fn charge_tick(db: &Db) -> Option<(bool, String)> {
+pub fn charge_tick(db: &Db, now: i64) -> Option<(bool, String)> {
+    if let Some((lift_at, _)) = load_json::<Option<(i64, i64)>>("charge-plan.json") {
+        if now >= lift_at {
+            fs::remove_file(data_dir().join("charge-plan.json")).ok();
+            let r = charge_once_start_with(db, false);
+            if !r.ok {
+                notify("Time to charge to full", "Open Trace → Health and press “Charge to full this once” (the trusted helper is off, so Trace can't lift the limit by itself).", true);
+            }
+            return Some((r.ok, format!("planned full charge: {}", r.message)));
+        }
+    }
     let restore: u32 = load_json::<Option<u32>>("charge-once.json")?;
     let battery = crate::batch4::battery_now()?;
     if battery.percent < 100 && !battery.discharging {
@@ -1192,9 +1324,10 @@ pub const COLOUR_MODES: &[&str] = &["auto", "srgb", "wide", "hdr"];
 
 /// The Lua call that changes one monitor's colour handling while keeping
 /// its mode, place, scale and rotation exactly as they are.
-fn lua_colour(setup: &crate::hardware::MonitorSetup, mode: &str, saturation: f64, brightness: f64) -> String {
+fn lua_colour(setup: &crate::hardware::MonitorSetup, mode: &str, saturation: f64, brightness: f64, icc: &str) -> String {
+    let profile = if icc.is_empty() { String::new() } else { format!(", icc = \"{icc}\"") };
     format!(
-        "hl.monitor({{ output = \"{}\", mode = \"{}\", position = \"{}x{}\", scale = {}, transform = {}, vrr = {}, bitdepth = {}, cm = \"{mode}\", sdrsaturation = {saturation:.2}, sdrbrightness = {brightness:.2} }})",
+        "hl.monitor({{ output = \"{}\", mode = \"{}\", position = \"{}x{}\", scale = {}, transform = {}, vrr = {}, bitdepth = {}, cm = \"{mode}\", sdrsaturation = {saturation:.2}, sdrbrightness = {brightness:.2}{profile} }})",
         setup.name,
         setup.mode.trim_end_matches("Hz"),
         setup.x,
@@ -1208,7 +1341,13 @@ fn lua_colour(setup: &crate::hardware::MonitorSetup, mode: &str, saturation: f64
 
 /// Colour mode, saturation and SDR brightness for one monitor, for this
 /// session (a Hyprland reload restores what its config says).
-pub fn set_monitor_colour(name: &str, mode: &str, saturation: f64, brightness: f64) -> ActionResult {
+pub fn set_monitor_colour(name: &str, mode: &str, saturation: f64, brightness: f64, icc: &str) -> ActionResult {
+    // A profile path goes into a Lua string, so only plain path characters are allowed.
+    let icc_ok = icc.is_empty()
+        || (icc.starts_with('/') && (icc.ends_with(".icc") || icc.ends_with(".icm")) && Path::new(icc).is_file() && icc.chars().all(|c| c.is_ascii_alphanumeric() || "/._- ".contains(c)));
+    if !icc_ok {
+        return err("Pick an .icc or .icm colour profile file (plain letters and digits in its path)");
+    }
     if !COLOUR_MODES.contains(&mode) || !(0.5..=1.5).contains(&saturation) || !(0.5..=2.0).contains(&brightness) {
         return err("Pick a listed colour mode, saturation 0.5–1.5 and brightness 0.5–2");
     }
@@ -1219,7 +1358,7 @@ pub fn set_monitor_colour(name: &str, mode: &str, saturation: f64, brightness: f
     let Some(info) = monitors.iter().find(|m| m.setup.name == name && m.setup.enabled) else {
         return err("No such monitor");
     };
-    match run(Command::new("hyprctl").args(["eval", &lua_colour(&info.setup, mode, saturation, brightness)])) {
+    match run(Command::new("hyprctl").args(["eval", &lua_colour(&info.setup, mode, saturation, brightness, icc)])) {
         Ok(out) if out.trim() == "ok" || out.trim().is_empty() => ok(format!("{name}: {mode}, saturation {saturation:.2}, brightness {brightness:.2}")),
         Ok(out) | Err(out) => err(out),
     }
@@ -1328,10 +1467,12 @@ mod tests {
     #[test]
     fn colour_change_keeps_the_monitor_where_it_is() {
         let setup = crate::hardware::MonitorSetup { name: "HDMI-A-1".into(), mode: "1920x1080@60.00Hz".into(), x: 1920, y: 0, scale: 1.0, transform: 0, vrr: false, mirror_of: String::new(), enabled: true };
-        let lua = lua_colour(&setup, "hdr", 1.1, 1.0);
+        let lua = lua_colour(&setup, "hdr", 1.1, 1.0, "");
+        assert!(lua_colour(&setup, "srgb", 1.0, 1.0, "/x/a.icc").contains(r#"icc = "/x/a.icc""#));
         assert!(lua.contains(r#"mode = "1920x1080@60.00""#) && lua.contains(r#"position = "1920x0""#));
         assert!(lua.contains("bitdepth = 10") && lua.contains(r#"cm = "hdr""#) && lua.contains("sdrsaturation = 1.10"));
-        assert!(!set_monitor_colour("HDMI-A-1", "rainbow", 1.0, 1.0).ok);
-        assert!(!set_monitor_colour("HDMI-A-1", "srgb", 9.0, 1.0).ok);
+        assert!(!set_monitor_colour("HDMI-A-1", "rainbow", 1.0, 1.0, "").ok);
+        assert!(!set_monitor_colour("HDMI-A-1", "srgb", 9.0, 1.0, "").ok);
+        assert!(!set_monitor_colour("HDMI-A-1", "srgb", 1.0, 1.0, "/etc/passwd\" }) os.exit() --.icc").ok);
     }
 }

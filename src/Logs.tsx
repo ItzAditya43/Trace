@@ -8,6 +8,7 @@ import {
   usePoll,
 } from "./ui";
 import { AccessLog } from "./Batch4";
+import { ScreenStrip } from "./Batch6";
 
 interface Totals {
   hours_recorded: number;
@@ -582,6 +583,7 @@ export default function Logs() {
           )}
         />
       </section>
+      <ScreenStrip />
       <AccessLog />
     </>
   );
