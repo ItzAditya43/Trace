@@ -13,6 +13,8 @@ Two things apply to several ideas:
 
 ## Suggested next
 
+**49 first** (fan speed — everything is in place except the experiment after a reboot).
+
 **15** (panic overlay — the command exists, the always-on-top mini window doesn't), **2**, **4**, **23**, **19**, **20**, **33**, **35**, then the hardware ideas at the end of this file.
 
 ---
@@ -103,7 +105,12 @@ Two things apply to several ideas:
 
 ## Hardware and display ideas added later
 
-49. **Fan curves (M).** *Not possible on laptops whose firmware exposes only "automatic" and "full speed" to Linux (this includes the ASUS Vivobook Trace is developed on); temperature rules (50) are the substitute.* Temperature → fan-speed curves with a graph editor, on machines whose fans accept a speed (many laptops, including ASUS ones, only offer automatic or full).
+49. **Fan speed and curves (M) — next, needs a reboot first.** The firmware of the ASUS Vivobook M3500QC does have a real fan-duty call; Linux just never uses it. Found by decompiling the firmware tables:
+    - `\_SB.PCI0.SBRG.EC0.ST84(fan, duty)` sets a fan's duty (fan 0 or 1, duty 0–255); `ST83(fan)` reads it back (0xFF appears to mean "automatic"); `TACH(fan)` reads RPM.
+    - Nothing in the firmware tables calls `ST84`, and the ASUS WMI interface the kernel driver uses reports fan curves as unsupported, so it can't be reached through the driver.
+    - The controller is driven through a firmware call (SMI) with a shared buffer, not ordinary controller registers — reading those returns all zeros.
+    - Safe way to call it: the `acpi_call` kernel module (installed, loads after the reboot into the new kernel), which runs the method under the firmware's own locks.
+    - Still to find out, with the machine in front of someone: which call returns a fan to automatic, and the lowest duty that keeps it spinning. Until that is known nothing should write to it unattended.
 50. ✅ **Built** (Hardware → Temperature Rules) — **Thermal rules (M).** "Above 85°C for a minute → quiet profile / cap CPU at 70%; below 70°C → back." Needs a way to act without a password prompt each time (see 53).
 51. **Stress test and cooling check (M).** A timed CPU or GPU load with a temperature and throttling curve, to judge paste, dust and fan health, and to compare before and after cleaning.
 52. **Per-monitor colour (M).** Colour profiles (ICC), gamma and saturation per display, and HDR on/off where the panel supports it.
