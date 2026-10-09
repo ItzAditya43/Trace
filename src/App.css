@@ -1812,3 +1812,44 @@ body {
 .failed-unit {
   margin-bottom: 10px;
 }
+
+/* ---- VPN ---- */
+
+.vpn-list {
+  max-height: 280px;
+}
+
+.gate-scroll {
+  max-height: 360px;
+  overflow: auto;
+  border: 1px solid #1e212b;
+  border-radius: 8px;
+}
+
+.gate-scroll thead th {
+  position: sticky;
+  top: 0;
+  background: #12141b;
+}
+
+.chip-add {
+  cursor: pointer;
+}
+
+.chip-add:hover:not(:disabled) {
+  border-color: #3987e5;
+  color: #e6e8ee;
+}
+
+.chip-row {
+  align-items: center;
+}
+
+.ctl-btn-sm:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.chip-row > .mem-muted {
+  font-size: 12px;
+}

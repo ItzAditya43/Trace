@@ -22,7 +22,7 @@ Built with Tauri (Rust) + React/TypeScript.
 - **Control**, in sections:
   - *Apps & Processes* — search, freeze/kill/limit processes, windows and workspaces, namespaces
   - *Power & Memory* — lock/suspend/log out/reboot/shut down, power profile, CPU governor, firmware fan/thermal profile, per-core on/off, fans, swappiness, drop caches, compact memory, empty swap, brightness/volume, GPU tuning
-  - *Network* — Wi-Fi and Bluetooth, firewalld ports, bandwidth limits, per-app network blocking
+  - *Network* — VPNs (connect, rename, auto-connect, delete; add from an OpenVPN/WireGuard file or straight from the VPN Gate public server list), Wi-Fi and Bluetooth, firewalld ports, bandwidth limits, per-app network blocking
   - *Display & Devices* — resolution, refresh rate, scale and night light (Hyprland), audio output/input selection, USB authorization, clipboard history
   - *Services* — systemd units, Docker containers, autostart apps, startup impact
   - *Automation* — undoable/dry-runnable profiles with a builder, memory rules ("if an app exceeds N GB, notify/freeze/restart/quit"), profiles scheduled by time or app launch, desktop alerts, and a full audit log

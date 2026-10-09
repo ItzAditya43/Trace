@@ -4448,6 +4448,7 @@ checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
 name = "trace"
 version = "0.5.0"
 dependencies = [
+ "base64 0.22.1",
  "bollard",
  "dirs 5.0.1",
  "libc",

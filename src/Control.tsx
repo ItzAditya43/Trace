@@ -4,6 +4,7 @@ import Automation from "./Automation";
 import Packages from "./Packages";
 import { CpuPowerControl, FanControl, MemoryTuningControl } from "./ControlTuning";
 import { AudioControl, CleanupControl, SessionControl } from "./ControlDesktop";
+import { VpnControl } from "./ControlVpn";
 import { DisplayControl, FirewallControl, WirelessControl } from "./ControlConnect";
 
 interface ProcessInfo {
@@ -1167,6 +1168,7 @@ export default function Control() {
       )}
       {section === "network" && (
         <>
+          <VpnControl />
           <WirelessControl />
           <FirewallControl />
           <NetworkControl />

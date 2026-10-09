@@ -21,6 +21,7 @@ mod systemd_control;
 mod tuning;
 mod update_check;
 mod usb_control;
+mod vpn;
 mod window_control;
 
 use serde::Serialize;
@@ -1261,6 +1262,55 @@ fn clean_up(state: tauri::State<AppState>, target: String) -> control_process::A
     logged(&state, &format!("clean_{target}"), desktop::clean(&target))
 }
 
+#[tauri::command(async)]
+fn list_vpns() -> Vec<vpn::VpnConnection> {
+    vpn::list()
+}
+
+#[tauri::command(async)]
+fn set_vpn_active(state: tauri::State<AppState>, uuid: String, up: bool) -> control_process::ActionResult {
+    logged(&state, if up { "vpn_connect" } else { "vpn_disconnect" }, vpn::set_active(&uuid, up))
+}
+
+#[tauri::command(async)]
+fn set_vpn_autoconnect(state: tauri::State<AppState>, uuid: String, enabled: bool) -> control_process::ActionResult {
+    logged(&state, "vpn_autoconnect", vpn::set_autoconnect(&uuid, enabled))
+}
+
+#[tauri::command(async)]
+fn rename_vpn(state: tauri::State<AppState>, uuid: String, name: String) -> control_process::ActionResult {
+    logged(&state, "vpn_rename", vpn::rename(&uuid, &name))
+}
+
+#[tauri::command(async)]
+fn delete_vpn(state: tauri::State<AppState>, uuid: String) -> control_process::ActionResult {
+    logged(&state, "vpn_delete", vpn::delete(&uuid))
+}
+
+#[tauri::command(async)]
+fn import_vpn_file(state: tauri::State<AppState>, path: String) -> control_process::ActionResult {
+    let r = match vpn::import_file(&path, None) {
+        Ok(_) => sys_util::ok("Added to your VPNs"),
+        Err(e) => sys_util::err(e),
+    };
+    logged(&state, "vpn_import", r)
+}
+
+#[tauri::command(async)]
+fn find_vpn_configs() -> Vec<String> {
+    vpn::find_configs()
+}
+
+#[tauri::command(async)]
+fn fetch_vpn_gate_servers() -> Result<Vec<vpn::GateServer>, String> {
+    vpn::fetch_gate_servers()
+}
+
+#[tauri::command(async)]
+fn add_vpn_gate_server(state: tauri::State<AppState>, host: String, connect: bool) -> control_process::ActionResult {
+    logged(&state, "vpn_gate_add", vpn::add_gate_server(&host, connect))
+}
+
 /// Runs an action, records it in the audit log, and hands the result back.
 fn logged(state: &AppState, name: &str, r: control_process::ActionResult) -> control_process::ActionResult {
     log_action(state, name, r.ok, &r.message);
@@ -1712,6 +1762,15 @@ pub fn run() {
             list_namespaces,
             scan_folder_sizes,
             get_memory_breakdown,
+            list_vpns,
+            set_vpn_active,
+            set_vpn_autoconnect,
+            rename_vpn,
+            delete_vpn,
+            import_vpn_file,
+            find_vpn_configs,
+            fetch_vpn_gate_servers,
+            add_vpn_gate_server,
             get_history,
             get_log_report,
             export_log_report,
@@ -1845,6 +1904,11 @@ mod tests {
         );
         dump("get_automation", json(&automation::Config::default()));
         dump("list_profiles", json(&profiles::list_profiles()));
+        dump("list_vpns", json(&vpn::list()));
+        dump("find_vpn_configs", json(&vpn::find_configs()));
+        if let Ok(servers) = vpn::fetch_gate_servers() {
+            dump("fetch_vpn_gate_servers", json(&servers));
+        }
         dump("get_log_report", json(&logbook::report(&state.db, "week", 0).unwrap()));
         dump("get_history", json(&state.db.history(chrono_now() - 6 * 3600, 60)));
         dump("get_audio_devices", json(&desktop::audio_devices()));
