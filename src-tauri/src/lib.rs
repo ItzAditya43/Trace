@@ -3,9 +3,11 @@ mod automation;
 mod connectivity;
 mod control_process;
 mod db;
+mod desktop;
 mod docker_control;
 mod gpu_control;
 mod health;
+mod logbook;
 mod memory_map;
 mod profiles;
 mod projects;
@@ -356,6 +358,8 @@ fn take_snapshot(state: &AppState) -> Snapshot {
     let mut processes: Vec<ProcessInfo> = sys
         .processes()
         .values()
+        // sysinfo lists threads as well; they'd repeat their process's memory.
+        .filter(|p| p.thread_kind().is_none())
         .map(|p| ProcessInfo {
             pid: p.pid().as_u32(),
             name: p.name().to_string_lossy().to_string(),
@@ -436,6 +440,18 @@ fn record_snapshot(app_state: &AppState, snap: &Snapshot) {
         snap.pressure.cpu_some,
         snap.pressure.io_some,
         snap.pressure.mem_some,
+    );
+    logbook::record_sample(
+        &app_state.db,
+        ts,
+        &logbook::Sample {
+            cpu_percent: snap.cpu_usage_percent,
+            ram_percent: snap.used_memory_bytes as f32 / snap.total_memory_bytes.max(1) as f32 * 100.0,
+            swap_bytes: snap.used_swap_bytes,
+            cpu_stall: snap.pressure.cpu_some,
+            mem_stall: snap.pressure.mem_some,
+            io_stall: snap.pressure.io_some,
+        },
     );
     for d in &snap.disks {
         app_state.db.insert_disk(
@@ -1174,6 +1190,77 @@ async fn get_memory_breakdown() -> Result<memory_map::MemoryBreakdown, String> {
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command(async)]
+fn get_history(state: tauri::State<AppState>, since_secs_ago: i64) -> db::History {
+    state.db.history(chrono_now() - since_secs_ago, since_secs_ago / 360)
+}
+
+#[tauri::command(async)]
+fn get_log_report(state: tauri::State<AppState>, kind: String, offset: i32) -> Result<logbook::LogReport, String> {
+    logbook::report(&state.db, &kind, offset)
+}
+
+#[tauri::command(async)]
+fn export_log_report(state: tauri::State<AppState>, kind: String, offset: i32) -> Result<String, String> {
+    logbook::export(&state.db, &kind, offset)
+}
+
+#[tauri::command(async)]
+fn search_processes(state: tauri::State<AppState>, query: String) -> Vec<ProcessInfo> {
+    let needle = query.to_lowercase();
+    let sys = state.sys.lock().unwrap();
+    let mut found: Vec<ProcessInfo> = sys
+        .processes()
+        .values()
+        // sysinfo lists threads too; keep only real processes.
+        .filter(|p| p.thread_kind().is_none())
+        .filter(|p| {
+            needle.is_empty()
+                || p.name().to_string_lossy().to_lowercase().contains(&needle)
+                || p.pid().to_string() == needle
+        })
+        .map(|p| ProcessInfo {
+            pid: p.pid().as_u32(),
+            name: p.name().to_string_lossy().to_string(),
+            cpu_usage: p.cpu_usage(),
+            memory_bytes: p.memory(),
+        })
+        .collect();
+    found.sort_by(|a, b| b.memory_bytes.cmp(&a.memory_bytes));
+    found.truncate(60);
+    found
+}
+
+#[tauri::command(async)]
+fn open_path(path: String, with: String) -> control_process::ActionResult {
+    desktop::open_path(&path, &with)
+}
+
+#[tauri::command(async)]
+fn session_action(state: tauri::State<AppState>, action: String) -> control_process::ActionResult {
+    logged(&state, &format!("session_{action}"), desktop::session_action(&action))
+}
+
+#[tauri::command(async)]
+fn get_audio_devices() -> desktop::AudioDevices {
+    desktop::audio_devices()
+}
+
+#[tauri::command(async)]
+fn set_default_audio(state: tauri::State<AppState>, kind: String, name: String) -> control_process::ActionResult {
+    logged(&state, "set_default_audio", desktop::set_default_audio(&kind, &name))
+}
+
+#[tauri::command(async)]
+fn get_cleanup_status() -> desktop::CleanupStatus {
+    desktop::cleanup_status()
+}
+
+#[tauri::command(async)]
+fn clean_up(state: tauri::State<AppState>, target: String) -> control_process::ActionResult {
+    logged(&state, &format!("clean_{target}"), desktop::clean(&target))
+}
+
 /// Runs an action, records it in the audit log, and hands the result back.
 fn logged(state: &AppState, name: &str, r: control_process::ActionResult) -> control_process::ActionResult {
     log_action(state, name, r.ok, &r.message);
@@ -1452,6 +1539,8 @@ fn set_night_light(state: tauri::State<AppState>, kelvin: Option<u32>) -> contro
     logged(&state, "set_night_light", connectivity::set_night_light(kelvin))
 }
 
+const TICK_SECS: u64 = 10;
+
 /// One pass of everything the background loop does besides sampling:
 /// per-app memory history, rules, scheduled profiles and alerts.
 fn background_tick(state: &AppState, snap: &Snapshot, tick: u64) {
@@ -1463,6 +1552,11 @@ fn background_tick(state: &AppState, snap: &Snapshot, tick: u64) {
             failed_units: health::failed_units().len(),
             reboot_needed: health::reboot_status().reboot_needed,
         };
+        logbook::ingest_crashes(&state.db, tick == 0);
+    }
+
+    if let Some(app) = logbook::focused_app() {
+        logbook::record_focus(&state.db, now, TICK_SECS as i64, &app);
     }
 
     if tick % 6 == 0 {
@@ -1473,6 +1567,13 @@ fn background_tick(state: &AppState, snap: &Snapshot, tick: u64) {
             .map(|a| (a.name.clone(), a.ram_bytes, a.swap_bytes))
             .collect();
         state.db.insert_app_memory(now, &top);
+        // Anything under ~20 MB is a helper, not something you'd call an app.
+        let running: Vec<(String, u64)> = apps
+            .iter()
+            .filter(|a| a.ram_bytes + a.swap_bytes > 20 * 1024 * 1024)
+            .map(|a| (a.name.clone(), a.ram_bytes))
+            .collect();
+        logbook::record_running(&state.db, now, 6 * TICK_SECS as i64, &running);
         let outcomes = automation::evaluate_rules(&config, &apps, &mut state.automation.lock().unwrap(), now);
         for o in outcomes {
             log_action(state, &o.description, o.ok, &o.message);
@@ -1528,7 +1629,9 @@ pub fn run() {
             std::thread::spawn(move || {
                 {
                     let state = handle.state::<AppState>();
+                    logbook::init(&state.db);
                     state.db.prune_app_memory(chrono_now() - 14 * 86_400);
+                    logbook::prune_raw(&state.db, chrono_now() - 90 * 86_400);
                     if let Some(boot) = health::boot_time() {
                         let booted_at = chrono_now() - System::uptime() as i64;
                         state.db.record_boot(&boot.boot_id, booted_at, boot.total_ms, boot.userspace_ms);
@@ -1544,7 +1647,7 @@ pub fn run() {
                         background_tick(&state, &snap, tick);
                     }
                     tick += 1;
-                    std::thread::sleep(std::time::Duration::from_secs(10));
+                    std::thread::sleep(std::time::Duration::from_secs(TICK_SECS));
                 }
             });
             Ok(())
@@ -1608,6 +1711,16 @@ pub fn run() {
             list_namespaces,
             scan_folder_sizes,
             get_memory_breakdown,
+            get_history,
+            get_log_report,
+            export_log_report,
+            search_processes,
+            open_path,
+            session_action,
+            get_audio_devices,
+            set_default_audio,
+            get_cleanup_status,
+            clean_up,
             get_app_memory_history,
             app_action,
             limit_app_memory,
@@ -1684,6 +1797,13 @@ mod tests {
         let report = health::health_report(&health_inputs(&snap, &slow, 0.0));
         assert!(report.score <= 100);
 
+        logbook::init(&state.db);
+        logbook::ingest_crashes(&state.db, false);
+        for kind in ["day", "week", "month", "year"] {
+            let report = logbook::report(&state.db, kind, 0).unwrap();
+            assert!(report.end_ts > report.start_ts);
+        }
+
         let Ok(dir) = std::env::var("TRACE_DUMP_DIR") else {
             return;
         };
@@ -1724,6 +1844,11 @@ mod tests {
         );
         dump("get_automation", json(&automation::Config::default()));
         dump("list_profiles", json(&profiles::list_profiles()));
+        dump("get_log_report", json(&logbook::report(&state.db, "week", 0).unwrap()));
+        dump("get_history", json(&state.db.history(chrono_now() - 6 * 3600, 60)));
+        dump("get_audio_devices", json(&desktop::audio_devices()));
+        dump("get_cleanup_status", json(&desktop::cleanup_status()));
+        dump("search_processes", json(&snap.top_processes));
     }
 
     mod erased {

@@ -65,7 +65,7 @@ export function HealthScore({ compact }: { compact?: boolean }) {
   const { report } = data;
   const issues = compact ? report.issues.slice(0, 3) : report.issues;
   return (
-    <section className="panel">
+    <section className="panel wide">
       <h2>Machine Health</h2>
       <div className="score-layout">
         <div className={`score-badge ${gradeClass(report.score)}`}>
@@ -113,7 +113,7 @@ function LogPanel({
   const [showAll, setShowAll] = useState(false);
   const lines = showAll ? data ?? [] : (data ?? []).slice(0, 8);
   return (
-    <section className="panel">
+    <section className="panel wide">
       <h2>{title}</h2>
       {loading && !data && <p className="loading">Reading the system journal…</p>}
       {data && data.length === 0 && <p className="status-ok">✓ {empty}</p>}

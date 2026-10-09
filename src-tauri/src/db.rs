@@ -288,6 +288,88 @@ impl Db {
         rows.filter_map(Result::ok).collect()
     }
 
+    /// Everything the History page charts, averaged into `bucket_secs`-wide
+    /// buckets so a month of 10-second samples comes back as a few hundred points.
+    pub fn history(&self, since_ts: i64, bucket_secs: i64) -> History {
+        let bucket = bucket_secs.max(10);
+        // Scoped so the connection lock is released before `events_since`
+        // takes it again below.
+        let (resources, pressure, disks) = {
+        let conn = self.conn.lock().unwrap();
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT (ts / ?2) * ?2, AVG(cpu_percent), MAX(cpu_percent),
+                        AVG(used_memory_bytes * 100.0 / total_memory_bytes), AVG(used_memory_bytes),
+                        AVG(used_swap_bytes), AVG(gpu_usage_percent)
+                 FROM resource_snapshots WHERE ts >= ?1 AND total_memory_bytes > 0
+                 GROUP BY 1 ORDER BY 1",
+            )
+            .unwrap();
+        let resources = stmt
+            .query_map(rusqlite::params![since_ts, bucket], |row| {
+                Ok(HistoryPoint {
+                    ts: row.get(0)?,
+                    cpu_percent: row.get(1)?,
+                    cpu_peak: row.get(2)?,
+                    ram_percent: row.get(3)?,
+                    ram_bytes: row.get::<_, f64>(4)? as u64,
+                    swap_bytes: row.get::<_, f64>(5)? as u64,
+                    gpu_percent: row.get(6)?,
+                })
+            })
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect();
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT (ts / ?2) * ?2, AVG(cpu_some), AVG(io_some), AVG(mem_some)
+                 FROM pressure_snapshots WHERE ts >= ?1 GROUP BY 1 ORDER BY 1",
+            )
+            .unwrap();
+        let pressure = stmt
+            .query_map(rusqlite::params![since_ts, bucket], |row| {
+                Ok(PressurePoint {
+                    ts: row.get(0)?,
+                    cpu_some: row.get(1)?,
+                    io_some: row.get(2)?,
+                    mem_some: row.get(3)?,
+                })
+            })
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect();
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT (ts / ?2) * ?2, mount_point, AVG(used_bytes), MAX(total_bytes)
+                 FROM disk_snapshots WHERE ts >= ?1 GROUP BY 1, 2 ORDER BY 1",
+            )
+            .unwrap();
+        let disks = stmt
+            .query_map(rusqlite::params![since_ts, bucket], |row| {
+                Ok(DiskPoint {
+                    ts: row.get(0)?,
+                    mount_point: row.get(1)?,
+                    used_bytes: row.get::<_, f64>(2)? as u64,
+                    total_bytes: row.get::<_, i64>(3)? as u64,
+                })
+            })
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect();
+
+        (resources, pressure, disks)
+        };
+        History {
+            resources,
+            pressure,
+            disks,
+            events: self.events_since(since_ts),
+        }
+    }
+
     pub fn resource_history(&self, since_ts: i64) -> Vec<ResourcePoint> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
@@ -388,4 +470,23 @@ pub struct BootPoint {
     pub ts: i64,
     pub total_ms: u64,
     pub userspace_ms: u64,
+}
+
+#[derive(Serialize, Clone)]
+pub struct HistoryPoint {
+    pub ts: i64,
+    pub cpu_percent: f32,
+    pub cpu_peak: f32,
+    pub ram_percent: f32,
+    pub ram_bytes: u64,
+    pub swap_bytes: u64,
+    pub gpu_percent: Option<f32>,
+}
+
+#[derive(Serialize, Clone)]
+pub struct History {
+    pub resources: Vec<HistoryPoint>,
+    pub pressure: Vec<PressurePoint>,
+    pub disks: Vec<DiskPoint>,
+    pub events: Vec<EventRow>,
 }

@@ -7,6 +7,8 @@ import Control from "./Control";
 import MemoryMap from "./MemoryMap";
 import Activity from "./Activity";
 import Health, { HealthScore } from "./Health";
+import Logs from "./Logs";
+import { Tile } from "./ui";
 import UpdateBanner from "./UpdateBanner";
 import "./App.css";
 
@@ -82,6 +84,7 @@ const PAGES = [
   { key: "activity", label: "Activity", hint: "Disk, network and wakeups by app" },
   { key: "health", label: "Health", hint: "Score, restarts, errors, battery, drives" },
   { key: "history", label: "History", hint: "Charts over time and disk usage" },
+  { key: "logs", label: "Logs", hint: "Daily, weekly, monthly and yearly record" },
   { key: "diagnose", label: "Investigate", hint: "What is slowing me down?" },
   { key: "projects", label: "Projects", hint: "Git and dependency status" },
   { key: "control", label: "Control", hint: "Act on the machine" },
@@ -122,6 +125,19 @@ function Bar({ percent, label }: { percent: number; label: string }) {
   );
 }
 
+function MiniBar({ label, percent }: { label: string; percent: number }) {
+  const level = percent > 85 ? "danger" : percent > 60 ? "warn" : "ok";
+  return (
+    <div className="mini-row" title={`${label} ${percent.toFixed(0)}%`}>
+      <span>{label}</span>
+      <div className="mini-track">
+        <div className={`bar-fill bar-${level}`} style={{ width: `${Math.min(percent, 100)}%` }} />
+      </div>
+      <span className="mini-value">{percent.toFixed(0)}%</span>
+    </div>
+  );
+}
+
 function App() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [tab, setTab] = useState<PageKey>("live");
@@ -158,6 +174,20 @@ function App() {
   }
 
   const page = PAGES.find((p) => p.key === tab)!;
+  const hottest = snapshot.temperatures.reduce((max, t) => Math.max(max, t.celsius), 0);
+  const netDown = snapshot.networks.reduce((sum, n) => sum + n.rx_bytes_per_sec, 0);
+  const netUp = snapshot.networks.reduce((sum, n) => sum + n.tx_bytes_per_sec, 0);
+  const fullest = snapshot.disks.reduce(
+    (max, d) => Math.max(max, d.total_bytes ? (1 - d.available_bytes / d.total_bytes) * 100 : 0),
+    0
+  );
+  const stalled = Math.max(
+    snapshot.pressure.cpu_some,
+    snapshot.pressure.mem_some,
+    snapshot.pressure.io_some
+  );
+  const tone = (value: number, warn: number, danger: number) =>
+    value > danger ? "danger" : value > warn ? "warn" : undefined;
   const memPercent =
     (snapshot.used_memory_bytes / snapshot.total_memory_bytes) * 100;
   const swapPercent = snapshot.total_swap_bytes
@@ -186,13 +216,32 @@ function App() {
             {p.label}
           </button>
         ))}
+        <div className="side-vitals">
+          <MiniBar label="CPU" percent={snapshot.cpu_usage_percent} />
+          <MiniBar label="RAM" percent={memPercent} />
+          {snapshot.total_swap_bytes > 0 && <MiniBar label="Swap" percent={swapPercent} />}
+          {hottest > 0 && (
+            <div className="mini-row">
+              <span>Temp</span>
+              <span className="mini-value">{hottest.toFixed(0)}°C</span>
+            </div>
+          )}
+          <div className="mini-row">
+            <span>Net</span>
+            <span className="mini-value">
+              ↓{formatRate(netDown)} ↑{formatRate(netUp)}
+            </span>
+          </div>
+        </div>
       </nav>
 
       <div className="page">
         <h2 className="page-title">
           {page.label} <span className="subtitle">{page.hint}</span>
         </h2>
+      <div className="page-body">
       {tab === "activity" && <Activity />}
+      {tab === "logs" && <Logs />}
       {tab === "health" && <Health />}
       {tab === "memory" && <MemoryMap />}
       {tab === "history" && <History />}
@@ -202,6 +251,57 @@ function App() {
       {tab === "live" && (
         <>
       <UpdateBanner />
+      <div className="tile-grid">
+        <Tile
+          label="CPU"
+          value={`${snapshot.cpu_usage_percent.toFixed(0)}%`}
+          detail={`load ${snapshot.load_average[0].toFixed(2)} on ${snapshot.per_core_usage.length} cores`}
+          tone={tone(snapshot.cpu_usage_percent, 60, 85)}
+        />
+        <Tile
+          label="RAM available"
+          value={`${bytesToGB(snapshot.available_memory_bytes)} GB`}
+          detail={`of ${bytesToGB(snapshot.total_memory_bytes)} GB`}
+          tone={tone(memPercent, 75, 90)}
+        />
+        <Tile
+          label="Swap used"
+          value={`${bytesToGB(snapshot.used_swap_bytes)} GB`}
+          detail={`${swapPercent.toFixed(0)}% of swap`}
+          tone={tone(swapPercent, 50, 80)}
+        />
+        <Tile
+          label="Stalled"
+          value={`${stalled.toFixed(0)}%`}
+          detail="worst of CPU, memory, disk"
+          tone={tone(stalled, 5, 20)}
+        />
+        <Tile
+          label="Hottest"
+          value={hottest > 0 ? `${hottest.toFixed(0)}°C` : "—"}
+          detail="highest sensor"
+          tone={tone(hottest, 80, 92)}
+        />
+        <Tile
+          label="Fullest disk"
+          value={`${fullest.toFixed(0)}%`}
+          detail="of its capacity"
+          tone={tone(fullest, 82, 92)}
+        />
+        <Tile
+          label="Network"
+          value={`↓ ${formatRate(netDown)}`}
+          detail={`↑ ${formatRate(netUp)}`}
+        />
+        {snapshot.battery && (
+          <Tile
+            label="Battery"
+            value={`${snapshot.battery.percent}%`}
+            detail={snapshot.battery.status.toLowerCase()}
+            tone={snapshot.battery.percent < 15 ? "danger" : undefined}
+          />
+        )}
+      </div>
       <HealthScore compact />
 
       <section className="panel">
@@ -367,7 +467,7 @@ function App() {
         })}
       </section>
 
-      <section className="panel">
+      <section className="panel wide">
         <h2>Top Processes (by memory)</h2>
         <table className="proc-table">
           <thead>
@@ -392,6 +492,7 @@ function App() {
       </section>
         </>
       )}
+      </div>
       </div>
     </main>
   );

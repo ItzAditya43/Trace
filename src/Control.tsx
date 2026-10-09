@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import Automation from "./Automation";
 import Packages from "./Packages";
 import { CpuPowerControl, FanControl, MemoryTuningControl } from "./ControlTuning";
+import { AudioControl, CleanupControl, SessionControl } from "./ControlDesktop";
 import { DisplayControl, FirewallControl, WirelessControl } from "./ControlConnect";
 
 interface ProcessInfo {
@@ -90,11 +91,17 @@ function ProcessControl() {
   const [ioLevel, setIoLevel] = useState("4");
   const [result, setResult] = useState<ActionResult | null>(null);
 
+  const [search, setSearch] = useState("");
+
   useEffect(() => {
-    invoke<{ top_processes: ProcessInfo[] }>("get_snapshot").then((s) =>
-      setProcesses(s.top_processes)
+    let cancelled = false;
+    invoke<ProcessInfo[]>("search_processes", { query: search }).then(
+      (found) => !cancelled && setProcesses(found)
     );
-  }, []);
+    return () => {
+      cancelled = true;
+    };
+  }, [search]);
 
   function targetPid(): number | null {
     const n = parseInt(pid, 10);
@@ -116,12 +123,20 @@ function ProcessControl() {
     <section className="panel">
       <h2>Processes</h2>
       <div className="proc-picker">
+        <input
+          className="port-input"
+          placeholder="Search by name or PID…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
         <select
           className="port-input"
           value={pid}
           onChange={(e) => setPid(e.target.value)}
         >
-          <option value="">Select a process…</option>
+          <option value="">
+            {processes.length} match{processes.length === 1 ? "" : "es"} — select a process…
+          </option>
           {processes.map((p) => (
             <option key={p.pid} value={p.pid}>
               {p.name} (PID {p.pid}) — {(p.memory_bytes / 1e9).toFixed(2)} GB
@@ -1091,7 +1106,7 @@ const SECTIONS = [
   { key: "devices", label: "Display & Devices" },
   { key: "services", label: "Services" },
   { key: "automation", label: "Automation" },
-  { key: "packages", label: "Packages" },
+  { key: "packages", label: "Packages & Cleanup" },
 ] as const;
 
 type SectionKey = (typeof SECTIONS)[number]["key"];
@@ -1102,7 +1117,7 @@ export default function Control() {
   const [profilesVersion, setProfilesVersion] = useState(0);
 
   return (
-    <div>
+    <div className="page-flow">
       <div className="range-picker section-picker">
         {SECTIONS.map((s) => (
           <button
@@ -1124,6 +1139,7 @@ export default function Control() {
       )}
       {section === "power" && (
         <>
+          <SessionControl />
           <CpuPowerControl />
           <FanControl />
           <MemoryTuningControl />
@@ -1141,6 +1157,7 @@ export default function Control() {
       {section === "devices" && (
         <>
           <DisplayControl />
+          <AudioControl />
           <UsbControl />
           <ClipboardHistory />
         </>
@@ -1160,7 +1177,12 @@ export default function Control() {
           <ActionLog />
         </>
       )}
-      {section === "packages" && <Packages />}
+      {section === "packages" && (
+        <>
+          <Packages />
+          <CleanupControl />
+        </>
+      )}
     </div>
   );
 }

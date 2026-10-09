@@ -15,6 +15,13 @@ pub struct ProjectInfo {
     pub disk_bytes: u64,
     pub dependency_count: Option<u32>,
     pub activity: String,
+    pub branch: Option<String>,
+    /// Files with uncommitted changes.
+    pub dirty_files: u32,
+    /// Commits not yet pushed to the branch's upstream (None when there is no upstream).
+    pub unpushed_commits: Option<u32>,
+    pub last_commit_subject: Option<String>,
+    pub remote_url: Option<String>,
 }
 
 fn run(cmd: &mut Command) -> Option<String> {
@@ -123,8 +130,22 @@ pub fn scan(root: &str) -> Vec<ProjectInfo> {
         let has_git = path.join(".git").exists();
         let mut commit_count = 0u32;
         let mut last_commit_days_ago = None;
+        let mut branch = None;
+        let mut dirty_files = 0u32;
+        let mut unpushed_commits = None;
+        let mut last_commit_subject = None;
+        let mut remote_url = None;
 
         if has_git {
+            let git = |args: &[&str]| run(Command::new("git").arg("-C").arg(&path).args(args));
+            branch = git(&["branch", "--show-current"]).filter(|b| !b.is_empty());
+            dirty_files = git(&["status", "--porcelain"])
+                .map(|s| s.lines().count() as u32)
+                .unwrap_or(0);
+            unpushed_commits = git(&["rev-list", "--count", "@{upstream}..HEAD"]).and_then(|s| s.parse().ok());
+            last_commit_subject = git(&["log", "-1", "--format=%s"]).filter(|s| !s.is_empty());
+            remote_url = git(&["remote", "get-url", "origin"]).filter(|s| !s.is_empty());
+
             commit_count = run(Command::new("git")
                 .args(["-C"])
                 .arg(&path)
@@ -166,6 +187,11 @@ pub fn scan(root: &str) -> Vec<ProjectInfo> {
             disk_bytes: dir_size_bytes(&path),
             dependency_count: count_dependencies(&path),
             activity,
+            branch,
+            dirty_files,
+            unpushed_commits,
+            last_commit_subject,
+            remote_url,
         });
     }
 

@@ -68,7 +68,7 @@ export default function Diagnose() {
   }
 
   return (
-    <div>
+    <div className="page-flow">
       <section className="panel diagnose-panel">
         <button
           className="diagnose-btn"

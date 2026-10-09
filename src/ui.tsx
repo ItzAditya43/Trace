@@ -207,3 +207,212 @@ export function Sparkline({
     </svg>
   );
 }
+
+export function formatDuration(secs: number): string {
+  if (secs < 60) return `${Math.round(secs)}s`;
+  const h = Math.floor(secs / 3600);
+  const m = Math.round((secs % 3600) / 60);
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+/** A headline number with a caption; `tone` colours the value by status. */
+export function Tile({
+  label,
+  value,
+  detail,
+  tone,
+}: {
+  label: string;
+  value: string;
+  detail?: string;
+  tone?: "ok" | "warn" | "danger";
+}) {
+  return (
+    <div className="tile">
+      <span className="tile-label">{label}</span>
+      <span className={"tile-value" + (tone ? ` tile-${tone}` : "")}>{value}</span>
+      {detail && <span className="tile-detail">{detail}</span>}
+    </div>
+  );
+}
+
+export interface ChartPoint {
+  ts: number;
+  v: number;
+}
+
+/**
+ * Line chart over time with a hover readout. `markers` draws a tick on the
+ * baseline at each timestamp (used for events).
+ */
+export function TimeChart({
+  points,
+  max,
+  color,
+  format,
+  formatTime,
+  markers = [],
+  height = 150,
+}: {
+  points: ChartPoint[];
+  max: number;
+  color: string;
+  format: (v: number) => string;
+  formatTime: (ts: number) => string;
+  markers?: number[];
+  height?: number;
+}) {
+  const [hover, setHover] = useState<number | null>(null);
+
+  if (points.length < 2) {
+    return (
+      <div className="chart-empty" style={{ height }}>
+        Not enough data yet — history builds up while Trace is running
+      </div>
+    );
+  }
+  const minTs = points[0].ts;
+  const maxTs = points[points.length - 1].ts;
+  const span = Math.max(maxTs - minTs, 1);
+  const top = Math.max(max, 1e-9);
+  const x = (ts: number) => ((ts - minTs) / span) * 100;
+  const y = (v: number) => height - (Math.min(v, top) / top) * height;
+  const values = points.map((p) => p.v);
+  const avg = values.reduce((a, b) => a + b, 0) / values.length;
+  const path = points
+    .map((p, i) => `${i === 0 ? "M" : "L"}${x(p.ts).toFixed(2)},${y(p.v).toFixed(2)}`)
+    .join(" ");
+  const shown = hover != null ? points[hover] : points[points.length - 1];
+
+  function onMove(e: React.MouseEvent<HTMLDivElement>) {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const ts = minTs + ((e.clientX - rect.left) / rect.width) * span;
+    let nearest = 0;
+    for (let i = 1; i < points.length; i++) {
+      if (Math.abs(points[i].ts - ts) < Math.abs(points[nearest].ts - ts)) nearest = i;
+    }
+    setHover(nearest);
+  }
+
+  return (
+    <div>
+      <div className="chart-stats">
+        <span className="chart-stat">
+          <strong>{format(shown.v)}</strong>{" "}
+          {hover != null ? `at ${formatTime(shown.ts)}` : "now"}
+        </span>
+        <span className="chart-stat">avg {format(avg)}</span>
+        <span className="chart-stat">min {format(Math.min(...values))}</span>
+        <span className="chart-stat">max {format(Math.max(...values))}</span>
+      </div>
+      <div className="chart-with-axis">
+        <div className="chart-y-axis">
+          <span>{format(top)}</span>
+          <span>{format(top / 2)}</span>
+          <span>{format(0)}</span>
+        </div>
+        <div
+          className="chart-plot"
+          style={{ height }}
+          onMouseMove={onMove}
+          onMouseLeave={() => setHover(null)}
+        >
+          <svg
+            viewBox={`0 0 100 ${height}`}
+            preserveAspectRatio="none"
+            className="chart-svg"
+            style={{ height }}
+          >
+            <line x1="0" y1={height / 2} x2="100" y2={height / 2} className="chart-grid" />
+            <line x1="0" y1="0" x2="100" y2="0" className="chart-grid" />
+            <path d={`${path} L100,${height} L0,${height} Z`} fill={color} opacity={0.14} />
+            <path
+              d={path}
+              fill="none"
+              stroke={color}
+              strokeWidth={2}
+              vectorEffect="non-scaling-stroke"
+            />
+          </svg>
+          {markers
+            .filter((ts) => ts >= minTs && ts <= maxTs)
+            .map((ts, i) => (
+              <span key={i} className="chart-marker" style={{ left: `${x(ts)}%` }} />
+            ))}
+          {hover != null && (
+            <>
+              <span className="chart-cursor" style={{ left: `${x(shown.ts)}%` }} />
+              <span
+                className="chart-dot"
+                style={{
+                  left: `${x(shown.ts)}%`,
+                  top: y(shown.v),
+                  background: color,
+                }}
+              />
+            </>
+          )}
+        </div>
+      </div>
+      <div className="chart-x-axis">
+        <span>{formatTime(minTs)}</span>
+        <span>{formatTime(maxTs)}</span>
+      </div>
+    </div>
+  );
+}
+
+/** Vertical bars, one per bucket, with a readout for the hovered bar. */
+export function BarChart({
+  bars,
+  color,
+  format,
+  max,
+  height = 110,
+}: {
+  bars: { label: string; value: number; empty?: boolean }[];
+  color: string;
+  format: (v: number) => string;
+  max?: number;
+  height?: number;
+}) {
+  const [hover, setHover] = useState<number | null>(null);
+  const top = Math.max(max ?? 0, ...bars.map((b) => b.value), 1e-9);
+  const shown = hover != null ? bars[hover] : null;
+  // Label roughly eight ticks however many bars there are.
+  const every = Math.max(1, Math.ceil(bars.length / 8));
+
+  return (
+    <div>
+      <div className="chart-stats">
+        <span className="chart-stat">
+          {shown ? (
+            <>
+              <strong>{shown.empty ? "no data" : format(shown.value)}</strong> · {shown.label}
+            </>
+          ) : (
+            <>peak {format(Math.max(...bars.map((b) => b.value)))} · hover a bar</>
+          )}
+        </span>
+      </div>
+      <div className="bar-chart" style={{ height }} onMouseLeave={() => setHover(null)}>
+        {bars.map((b, i) => (
+          <div key={i} className="bar-slot" onMouseEnter={() => setHover(i)}>
+            <div
+              className={"bar-column" + (hover === i ? " hovered" : "")}
+              style={{
+                height: b.empty ? 2 : `${Math.max((b.value / top) * 100, 1.5)}%`,
+                background: b.empty ? "#262a36" : color,
+              }}
+            />
+          </div>
+        ))}
+      </div>
+      <div className="bar-labels">
+        {bars.map((b, i) => (
+          <span key={i}>{i % every === 0 ? b.label : ""}</span>
+        ))}
+      </div>
+    </div>
+  );
+}

@@ -1388,3 +1388,382 @@ body {
 .proc-table + .control-actions {
   margin-top: 10px;
 }
+
+/* ---- responsive card grid: pages fill the window without stretching cards ---- */
+
+.container.shell {
+  max-width: 1760px;
+}
+
+.page-body,
+.page-flow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: stretch;
+}
+
+/* A wrapper element inside the page passes its children through as cards. */
+.page-body > .page-flow {
+  display: contents;
+}
+
+/* Cards sit side by side when there is room for more than one and grow to
+   share the row, so a row never ends in an empty gap. */
+.page-body .panel {
+  flex: 1 1 340px;
+  margin-bottom: 0;
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Anything that isn't a card (pickers, banners, tile strips, notices) and
+   cards marked wide take a full row. */
+.page-body > :not(.panel),
+.page-flow > :not(.panel),
+.page-body .panel.wide {
+  flex: 1 1 100%;
+}
+
+.page-body > .range-picker,
+.page-flow > .range-picker {
+  margin-bottom: 0;
+}
+
+.page-body .loading,
+.page-body > p {
+  margin: 0;
+}
+
+.tile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.tile {
+  background: #12141b;
+  border: 1px solid #1e212b;
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.tile-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #7d8494;
+}
+
+.tile-value {
+  font-size: 22px;
+  font-weight: 600;
+  color: #e6e8ee;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Status is carried by a marker, not by recolouring the number. */
+.tile-warn::after,
+.tile-danger::after,
+.tile-ok::after {
+  font-size: 12px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+.tile-ok::after { content: "✓"; color: #0ca30c; }
+.tile-warn::after { content: "!"; color: #fab219; font-weight: 700; }
+.tile-danger::after { content: "✗"; color: #d03b3b; font-weight: 700; }
+
+.tile-detail {
+  font-size: 12px;
+  color: #7d8494;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- sidebar vitals ---- */
+
+.side-vitals {
+  margin-top: 18px;
+  padding: 12px 12px 4px;
+  border-top: 1px solid #1e212b;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mini-row {
+  display: grid;
+  grid-template-columns: 38px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: #7d8494;
+}
+
+.mini-track {
+  height: 5px;
+  background: #1c1f29;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.mini-track .bar-fill {
+  height: 100%;
+}
+
+.mini-value {
+  color: #b3b8c4;
+  font-variant-numeric: tabular-nums;
+  grid-column: span 1;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.mini-row > .mini-value:nth-child(2) {
+  grid-column: 2 / -1;
+}
+
+/* ---- charts ---- */
+
+.chart-plot {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  cursor: crosshair;
+}
+
+.chart-stat strong {
+  color: #e6e8ee;
+}
+
+.chart-cursor {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: #5a6072;
+  pointer-events: none;
+}
+
+.chart-dot {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  margin: -4px 0 0 -4px;
+  border-radius: 50%;
+  border: 2px solid #12141b;
+  pointer-events: none;
+}
+
+.chart-marker {
+  position: absolute;
+  bottom: 0;
+  width: 2px;
+  height: 8px;
+  margin-left: -1px;
+  background: #fab219;
+  pointer-events: none;
+}
+
+.chart-stats {
+  flex-wrap: wrap;
+  gap: 6px 18px;
+}
+
+.bar-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  border-bottom: 1px solid #262a36;
+}
+
+.bar-slot {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  min-width: 0;
+}
+
+.bar-column {
+  width: 100%;
+  border-radius: 3px 3px 0 0;
+  opacity: 0.85;
+}
+
+.bar-column.hovered {
+  opacity: 1;
+  outline: 1px solid #e6e8ee;
+}
+
+.bar-labels {
+  display: flex;
+  gap: 2px;
+  margin-top: 4px;
+  font-size: 10px;
+  color: #7d8494;
+}
+
+.bar-labels span {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: visible;
+}
+
+.event-scroll {
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+/* ---- logs ---- */
+
+.log-controls,
+.project-toolbar {
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.log-spacer {
+  flex: 1;
+}
+
+.log-period {
+  font-size: 13px;
+  font-weight: 600;
+  color: #e6e8ee;
+  padding: 0 6px;
+  white-space: nowrap;
+}
+
+/* ---- projects ---- */
+
+.project-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.project-card .chip-row {
+  margin: 0;
+}
+
+.project-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.project-card-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: #e6e8ee;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity-chip {
+  flex-shrink: 0;
+}
+
+.project-commit {
+  margin: 0;
+  font-size: 12px;
+  color: #b3b8c4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-flags,
+.project-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 12px;
+  color: #7d8494;
+}
+
+.project-flags p,
+.project-flags span {
+  margin: 0;
+}
+
+.project-actions {
+  margin: 2px 0 0;
+}
+
+.small-select {
+  width: 170px;
+  flex: none;
+}
+
+.proc-picker {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.proc-picker > * {
+  flex: 1;
+  min-width: 180px;
+}
+
+/* ---- narrow windows ---- */
+
+.control-row {
+  flex-wrap: wrap;
+}
+
+.control-row label {
+  min-width: 160px;
+}
+
+.mem-legend-row {
+  grid-template-columns: 12px minmax(90px, 130px) 80px 40px minmax(0, 1fr);
+}
+
+.mem-app-row,
+.folder-row {
+  grid-template-columns: minmax(90px, 220px) minmax(40px, 1fr) minmax(90px, auto);
+}
+
+.page-body .panel {
+  overflow-x: auto;
+}
+
+@media (max-width: 760px) {
+  .side-vitals {
+    display: none;
+  }
+  .mem-legend-note {
+    display: none;
+  }
+  .mem-legend-row {
+    grid-template-columns: 12px 1fr 80px 40px;
+  }
+  .page-title .subtitle {
+    display: none;
+  }
+}
+
+.event-time {
+  white-space: nowrap;
+}
+
+.project-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr));
+  gap: 16px;
+}

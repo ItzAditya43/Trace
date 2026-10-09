@@ -57,7 +57,7 @@ export default function DiskExplorer() {
   const maxSize = entries && entries.length > 0 ? entries[0].size_bytes : 1;
 
   return (
-    <section className="panel">
+    <section className="panel wide">
       <h2>Disk Usage Explorer</h2>
       <div className="scan-controls">
         <input

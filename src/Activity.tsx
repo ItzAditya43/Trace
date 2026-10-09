@@ -48,7 +48,7 @@ export default function Activity() {
 
   return (
     <>
-      <section className="panel">
+      <section className="panel wide">
         <h2>Drives Right Now</h2>
         {data.drives.map((d) => (
           <div key={d.device} className="meta-row">
@@ -61,7 +61,7 @@ export default function Activity() {
         ))}
       </section>
 
-      <section className="panel">
+      <section className="panel wide">
         <h2>Who Is Busy</h2>
         <div className="range-picker">
           {SORTS.map((s) => (

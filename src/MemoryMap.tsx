@@ -229,7 +229,7 @@ function Distribution({ data }: { data: MemoryBreakdown }) {
   const inUse = data.total_bytes - data.available_bytes;
 
   return (
-    <section className="panel">
+    <section className="panel wide">
       <h2>Where Your RAM Is</h2>
       <div className="mem-stats">
         <div className="mem-stat">
@@ -382,7 +382,7 @@ function Apps({ data, onChange }: { data: MemoryBreakdown; onChange: () => void 
   );
 
   return (
-    <section className="panel">
+    <section className="panel wide">
       <h2>Memory by App</h2>
       <div className="mem-key">
         <span>
