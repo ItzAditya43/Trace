@@ -11,6 +11,13 @@ interface ResourcePoint {
   gpu_usage_percent: number | null;
 }
 
+interface PressurePoint {
+  ts: number;
+  cpu_some: number;
+  io_some: number;
+  mem_some: number;
+}
+
 interface DiskPoint {
   ts: number;
   mount_point: string;
@@ -193,20 +200,25 @@ export default function History() {
   const [rangeSecs, setRangeSecs] = useState(RANGES[1].secs);
   const [resources, setResources] = useState<ResourcePoint[]>([]);
   const [disks, setDisks] = useState<DiskPoint[]>([]);
+  const [pressure, setPressure] = useState<PressurePoint[]>([]);
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
       try {
-        const [r, d] = await Promise.all([
+        const [r, d, p] = await Promise.all([
           invoke<ResourcePoint[]>("get_resource_history", {
             sinceSecsAgo: rangeSecs,
           }),
           invoke<DiskPoint[]>("get_disk_history", { sinceSecsAgo: rangeSecs }),
+          invoke<PressurePoint[]>("get_pressure_history", {
+            sinceSecsAgo: rangeSecs,
+          }),
         ]);
         if (!cancelled) {
           setResources(r);
           setDisks(d);
+          setPressure(p);
         }
       } catch (e) {
         console.error(e);
@@ -261,6 +273,32 @@ export default function History() {
           max={100}
           color="#3fb968"
           rangeSecs={rangeSecs}
+        />
+      </section>
+
+      <section className="panel">
+        <h2>Stalled on Memory %</h2>
+        <LineChart
+          points={pressure.map((p) => ({ ts: p.ts, v: p.mem_some }))}
+          max={Math.max(10, ...pressure.map((p) => p.mem_some))}
+          color="#d95926"
+          rangeSecs={rangeSecs}
+          height={120}
+        />
+        <p className="diagnose-hint">
+          Share of time some task was waiting for memory. Unlike RAM usage,
+          anything above zero here is slowdown you could actually feel.
+        </p>
+      </section>
+
+      <section className="panel">
+        <h2>Stalled on Disk %</h2>
+        <LineChart
+          points={pressure.map((p) => ({ ts: p.ts, v: p.io_some }))}
+          max={Math.max(10, ...pressure.map((p) => p.io_some))}
+          color="#c98500"
+          rangeSecs={rangeSecs}
+          height={120}
         />
       </section>
 

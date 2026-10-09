@@ -4,6 +4,9 @@ import History from "./History";
 import Diagnose from "./Diagnose";
 import Projects from "./Projects";
 import Control from "./Control";
+import MemoryMap from "./MemoryMap";
+import Activity from "./Activity";
+import Health, { HealthScore } from "./Health";
 import UpdateBanner from "./UpdateBanner";
 import "./App.css";
 
@@ -53,6 +56,7 @@ interface Snapshot {
   per_core_freq_mhz: number[];
   total_memory_bytes: number;
   used_memory_bytes: number;
+  available_memory_bytes: number;
   total_swap_bytes: number;
   used_swap_bytes: number;
   load_average: [number, number, number];
@@ -63,7 +67,27 @@ interface Snapshot {
   temperatures: TempSensor[];
   networks: NetworkInfo[];
   battery: BatteryInfo | null;
+  pressure: {
+    cpu_some: number;
+    io_some: number;
+    io_full: number;
+    mem_some: number;
+    mem_full: number;
+  };
 }
+
+const PAGES = [
+  { key: "live", label: "Overview", hint: "Live state of the machine" },
+  { key: "memory", label: "Memory", hint: "Where RAM and swap are going" },
+  { key: "activity", label: "Activity", hint: "Disk, network and wakeups by app" },
+  { key: "health", label: "Health", hint: "Score, restarts, errors, battery, drives" },
+  { key: "history", label: "History", hint: "Charts over time and disk usage" },
+  { key: "diagnose", label: "Investigate", hint: "What is slowing me down?" },
+  { key: "projects", label: "Projects", hint: "Git and dependency status" },
+  { key: "control", label: "Control", hint: "Act on the machine" },
+] as const;
+
+type PageKey = (typeof PAGES)[number]["key"];
 
 function bytesToGB(bytes: number): string {
   return (bytes / 1024 / 1024 / 1024).toFixed(1);
@@ -100,9 +124,7 @@ function Bar({ percent, label }: { percent: number; label: string }) {
 
 function App() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
-  const [tab, setTab] = useState<
-    "live" | "history" | "diagnose" | "projects" | "control"
-  >("live");
+  const [tab, setTab] = useState<PageKey>("live");
 
   useEffect(() => {
     let cancelled = false;
@@ -135,6 +157,7 @@ function App() {
     );
   }
 
+  const page = PAGES.find((p) => p.key === tab)!;
   const memPercent =
     (snapshot.used_memory_bytes / snapshot.total_memory_bytes) * 100;
   const swapPercent = snapshot.total_swap_bytes
@@ -142,54 +165,44 @@ function App() {
     : 0;
 
   return (
-    <main className="container">
-      <UpdateBanner />
+    <main className="container shell">
       <header className="header">
         <h1>Trace</h1>
         <span className="subtitle">
-          Machine Observatory · uptime {formatUptime(snapshot.uptime_secs)}
+          Machine Observatory
+          <br />
+          up {formatUptime(snapshot.uptime_secs)}
         </span>
       </header>
 
-      <nav className="tab-bar">
-        <button
-          className={tab === "live" ? "tab-btn active" : "tab-btn"}
-          onClick={() => setTab("live")}
-        >
-          Live
-        </button>
-        <button
-          className={tab === "history" ? "tab-btn active" : "tab-btn"}
-          onClick={() => setTab("history")}
-        >
-          History
-        </button>
-        <button
-          className={tab === "diagnose" ? "tab-btn active" : "tab-btn"}
-          onClick={() => setTab("diagnose")}
-        >
-          Investigate
-        </button>
-        <button
-          className={tab === "projects" ? "tab-btn active" : "tab-btn"}
-          onClick={() => setTab("projects")}
-        >
-          Projects
-        </button>
-        <button
-          className={tab === "control" ? "tab-btn active" : "tab-btn"}
-          onClick={() => setTab("control")}
-        >
-          Control
-        </button>
+      <nav className="side-nav">
+        {PAGES.map((p) => (
+          <button
+            key={p.key}
+            className={tab === p.key ? "nav-btn active" : "nav-btn"}
+            title={p.hint}
+            onClick={() => setTab(p.key)}
+          >
+            {p.label}
+          </button>
+        ))}
       </nav>
 
+      <div className="page">
+        <h2 className="page-title">
+          {page.label} <span className="subtitle">{page.hint}</span>
+        </h2>
+      {tab === "activity" && <Activity />}
+      {tab === "health" && <Health />}
+      {tab === "memory" && <MemoryMap />}
       {tab === "history" && <History />}
       {tab === "diagnose" && <Diagnose />}
       {tab === "projects" && <Projects />}
       {tab === "control" && <Control />}
       {tab === "live" && (
         <>
+      <UpdateBanner />
+      <HealthScore compact />
 
       <section className="panel">
         <h2>System Health</h2>
@@ -201,12 +214,20 @@ function App() {
         <div className="meta-row">
           <span>
             RAM: {bytesToGB(snapshot.used_memory_bytes)} /{" "}
-            {bytesToGB(snapshot.total_memory_bytes)} GB
+            {bytesToGB(snapshot.total_memory_bytes)} GB ·{" "}
+            {bytesToGB(snapshot.available_memory_bytes)} GB available
           </span>
           <span>
             Load avg: {snapshot.load_average[0].toFixed(2)}{" "}
             {snapshot.load_average[1].toFixed(2)}{" "}
             {snapshot.load_average[2].toFixed(2)}
+          </span>
+        </div>
+        <div className="meta-row">
+          <span title="Share of the last 10 seconds in which work was held up waiting for each resource">
+            Stalled waiting for — CPU {snapshot.pressure.cpu_some.toFixed(0)}% ·
+            memory {snapshot.pressure.mem_some.toFixed(0)}% · disk{" "}
+            {snapshot.pressure.io_some.toFixed(0)}%
           </span>
         </div>
       </section>
@@ -371,6 +392,7 @@ function App() {
       </section>
         </>
       )}
+      </div>
     </main>
   );
 }

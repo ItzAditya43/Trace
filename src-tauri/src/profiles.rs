@@ -15,6 +15,10 @@ pub enum Action {
     RestartService { name: String },
     StartContainer { id: String },
     StopContainer { id: String },
+    FreezeApp { app: String },
+    ResumeApp { app: String },
+    QuitApp { app: String },
+    SetPowerProfile { profile: String },
 }
 
 impl Action {
@@ -32,6 +36,11 @@ impl Action {
             Action::SetCpuLimit { .. } => None,
             Action::SetMemoryLimitMb { .. } => None,
             Action::RestartService { .. } => None,
+            Action::FreezeApp { app } => Some(Action::ResumeApp { app: app.clone() }),
+            Action::ResumeApp { app } => Some(Action::FreezeApp { app: app.clone() }),
+            // The previous power profile and a quit app's state aren't captured.
+            Action::QuitApp { .. } => None,
+            Action::SetPowerProfile { .. } => None,
         }
     }
 
@@ -51,6 +60,10 @@ impl Action {
             Action::RestartService { name } => format!("Restart service {name}"),
             Action::StartContainer { id } => format!("Start container {id}"),
             Action::StopContainer { id } => format!("Stop container {id}"),
+            Action::FreezeApp { app } => format!("Freeze every {app} process"),
+            Action::ResumeApp { app } => format!("Resume every {app} process"),
+            Action::QuitApp { app } => format!("Quit {app}"),
+            Action::SetPowerProfile { profile } => format!("Switch power profile to {profile}"),
         }
     }
 }

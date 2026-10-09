@@ -1,5 +1,9 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import Automation from "./Automation";
+import Packages from "./Packages";
+import { CpuPowerControl, FanControl, MemoryTuningControl } from "./ControlTuning";
+import { DisplayControl, FirewallControl, WirelessControl } from "./ControlConnect";
 
 interface ProcessInfo {
   pid: number;
@@ -39,7 +43,11 @@ type ProfileAction =
   | { type: "StopService"; name: string }
   | { type: "RestartService"; name: string }
   | { type: "StartContainer"; id: string }
-  | { type: "StopContainer"; id: string };
+  | { type: "StopContainer"; id: string }
+  | { type: "FreezeApp"; app: string }
+  | { type: "ResumeApp"; app: string }
+  | { type: "QuitApp"; app: string }
+  | { type: "SetPowerProfile"; profile: string };
 
 interface Profile {
   name: string;
@@ -965,14 +973,12 @@ function ProfilesControl() {
     <section className="panel">
       <h2>Profiles</h2>
       <p className="diagnose-hint">
-        Profiles are TOML files under your Trace data directory — hand-edit
-        them to build "Gaming Mode", "Focus Mode", etc. as ordered action
-        lists.
+        Ordered lists of actions you can dry-run, apply and undo. Build one
+        below, or hand-edit the TOML files under your Trace data directory.
       </p>
       {profiles.length === 0 && (
         <p className="diagnose-hint">
-          No profiles yet. A starter "Focus Mode" template was created empty
-          — edit its TOML file to add actions.
+          No profiles yet — build one below.
         </p>
       )}
       {profiles.map((p) => (
@@ -1034,6 +1040,14 @@ function describeAction(a: ProfileAction): string {
       return `Start container ${a.id}`;
     case "StopContainer":
       return `Stop container ${a.id}`;
+    case "FreezeApp":
+      return `Freeze every ${a.app} process`;
+    case "ResumeApp":
+      return `Resume every ${a.app} process`;
+    case "QuitApp":
+      return `Quit ${a.app}`;
+    case "SetPowerProfile":
+      return `Switch power profile to ${a.profile}`;
   }
 }
 
@@ -1070,23 +1084,83 @@ function ActionLog() {
   );
 }
 
+const SECTIONS = [
+  { key: "apps", label: "Apps & Processes" },
+  { key: "power", label: "Power & Memory" },
+  { key: "network", label: "Network" },
+  { key: "devices", label: "Display & Devices" },
+  { key: "services", label: "Services" },
+  { key: "automation", label: "Automation" },
+  { key: "packages", label: "Packages" },
+] as const;
+
+type SectionKey = (typeof SECTIONS)[number]["key"];
+
 export default function Control() {
+  const [section, setSection] = useState<SectionKey>("apps");
+  // Bumped when the builder saves a profile, so the list above it reloads.
+  const [profilesVersion, setProfilesVersion] = useState(0);
+
   return (
     <div>
-      <ProcessControl />
-      <SystemControl />
-      <NetworkControl />
-      <ServiceControl />
-      <DockerControl />
-      <GpuControl />
-      <UsbControl />
-      <WindowControl />
-      <NamespaceControl />
-      <AutostartControl />
-      <StartupImpact />
-      <ClipboardHistory />
-      <ProfilesControl />
-      <ActionLog />
+      <div className="range-picker section-picker">
+        {SECTIONS.map((s) => (
+          <button
+            key={s.key}
+            className={s.key === section ? "range-btn active" : "range-btn"}
+            onClick={() => setSection(s.key)}
+          >
+            {s.label}
+          </button>
+        ))}
+      </div>
+
+      {section === "apps" && (
+        <>
+          <ProcessControl />
+          <WindowControl />
+          <NamespaceControl />
+        </>
+      )}
+      {section === "power" && (
+        <>
+          <CpuPowerControl />
+          <FanControl />
+          <MemoryTuningControl />
+          <SystemControl />
+          <GpuControl />
+        </>
+      )}
+      {section === "network" && (
+        <>
+          <WirelessControl />
+          <FirewallControl />
+          <NetworkControl />
+        </>
+      )}
+      {section === "devices" && (
+        <>
+          <DisplayControl />
+          <UsbControl />
+          <ClipboardHistory />
+        </>
+      )}
+      {section === "services" && (
+        <>
+          <ServiceControl />
+          <DockerControl />
+          <AutostartControl />
+          <StartupImpact />
+        </>
+      )}
+      {section === "automation" && (
+        <>
+          <ProfilesControl key={profilesVersion} />
+          <Automation onProfilesChanged={() => setProfilesVersion((v) => v + 1)} />
+          <ActionLog />
+        </>
+      )}
+      {section === "packages" && <Packages />}
     </div>
   );
 }

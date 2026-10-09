@@ -1,14 +1,22 @@
+mod activity;
+mod automation;
+mod connectivity;
 mod control_process;
 mod db;
 mod docker_control;
 mod gpu_control;
+mod health;
+mod memory_map;
 mod profiles;
 mod projects;
 mod namespace_control;
 mod network_control;
+mod packages;
 mod storage_explorer;
+mod sys_util;
 mod system_control;
 mod systemd_control;
+mod tuning;
 mod update_check;
 mod usb_control;
 mod window_control;
@@ -74,6 +82,7 @@ struct Snapshot {
     per_core_freq_mhz: Vec<u64>,
     total_memory_bytes: u64,
     used_memory_bytes: u64,
+    available_memory_bytes: u64,
     total_swap_bytes: u64,
     used_swap_bytes: u64,
     load_average: (f64, f64, f64),
@@ -84,6 +93,7 @@ struct Snapshot {
     temperatures: Vec<TempSensor>,
     networks: Vec<NetworkInfo>,
     battery: Option<BatteryInfo>,
+    pressure: health::Pressure,
 }
 
 struct NetSample {
@@ -98,6 +108,17 @@ struct AppState {
     db: db::Db,
     last_snapshot: Mutex<Option<Snapshot>>,
     clipboard_history: Mutex<std::collections::VecDeque<String>>,
+    activity: Mutex<activity::ActivityState>,
+    automation: Mutex<automation::State>,
+    slow_health: Mutex<SlowHealth>,
+}
+
+/// Health facts that are too expensive to recompute on every 10s tick
+/// (they spawn `systemctl` and walk `/proc`), refreshed every few minutes.
+#[derive(Default, Clone)]
+struct SlowHealth {
+    failed_units: usize,
+    reboot_needed: bool,
 }
 
 const CLIPBOARD_HISTORY_LIMIT: usize = 50;
@@ -359,6 +380,7 @@ fn take_snapshot(state: &AppState) -> Snapshot {
         per_core_freq_mhz: sys.cpus().iter().map(|c| c.frequency()).collect(),
         total_memory_bytes: sys.total_memory(),
         used_memory_bytes: sys.used_memory(),
+        available_memory_bytes: sys.available_memory(),
         total_swap_bytes: sys.total_swap(),
         used_swap_bytes: sys.used_swap(),
         load_average: (load.one, load.five, load.fifteen),
@@ -369,6 +391,7 @@ fn take_snapshot(state: &AppState) -> Snapshot {
         temperatures: read_temperatures(),
         networks,
         battery: read_battery(),
+        pressure: health::read_pressure(),
     }
 }
 
@@ -407,6 +430,12 @@ fn record_snapshot(app_state: &AppState, snap: &Snapshot) {
         snap.used_swap_bytes,
         gpu.map(|g| g.usage_percent),
         gpu.map(|g| g.vram_used_bytes),
+    );
+    app_state.db.insert_pressure(
+        ts,
+        snap.pressure.cpu_some,
+        snap.pressure.io_some,
+        snap.pressure.mem_some,
     );
     for d in &snap.disks {
         app_state.db.insert_disk(
@@ -471,6 +500,30 @@ fn detect_events(app_state: &AppState, prev: &Snapshot, curr: &Snapshot, ts: i64
         );
     }
 
+    if curr.pressure.mem_some > 10.0 && prev.pressure.mem_some <= 10.0 {
+        db.insert_event(
+            ts,
+            "memory_stall",
+            "warn",
+            &format!(
+                "Tasks stalled waiting for memory {:.0}% of the time",
+                curr.pressure.mem_some
+            ),
+        );
+    }
+
+    if curr.pressure.io_some > 25.0 && prev.pressure.io_some <= 25.0 {
+        db.insert_event(
+            ts,
+            "io_stall",
+            "warn",
+            &format!(
+                "Tasks stalled waiting for disk {:.0}% of the time",
+                curr.pressure.io_some
+            ),
+        );
+    }
+
     for d in &curr.disks {
         if let Some(pd) = prev.disks.iter().find(|p| p.mount_point == d.mount_point) {
             let delta_gb = (pd.available_bytes as f64 - d.available_bytes as f64) / GB;
@@ -517,7 +570,26 @@ fn diagnose_slowness(state: tauri::State<AppState>) -> Diagnosis {
     let has = |t: &str| events.iter().any(|e| e.event_type == t);
     let count = |t: &str| events.iter().filter(|e| e.event_type == t).count();
 
-    let (cause, confidence, evidence) = if has("swap_activated") && has("ram_increase") {
+    let (cause, confidence, evidence) = if has("memory_stall") {
+        (
+            "Memory pressure — work is stalling while the kernel frees RAM".to_string(),
+            "HIGH".to_string(),
+            vec![
+                format!("Memory stalls were measured {} time(s) in the last hour", count("memory_stall")),
+                "This is direct evidence of slowdown, not just high usage".to_string(),
+                "The Memory page shows which app to close".to_string(),
+            ],
+        )
+    } else if has("io_stall") {
+        (
+            "Disk is the bottleneck — work is stalling on reads and writes".to_string(),
+            "HIGH".to_string(),
+            vec![
+                format!("Disk stalls were measured {} time(s) in the last hour", count("io_stall")),
+                "The Activity page shows which app is reading or writing".to_string(),
+            ],
+        )
+    } else if has("swap_activated") && has("ram_increase") {
         (
             "Memory pressure → swapping".to_string(),
             "HIGH".to_string(),
@@ -611,6 +683,10 @@ fn log_action(state: &AppState, action_desc: &str, ok: bool, message: &str) {
     state.db.insert_action(chrono_now(), action_desc, ok, message);
 }
 
+fn as_result(r: control_process::ActionResult) -> Result<String, String> {
+    if r.ok { Ok(r.message) } else { Err(r.message) }
+}
+
 async fn execute_action(action: &profiles::Action) -> Result<String, String> {
     use profiles::Action::*;
     match action {
@@ -639,6 +715,10 @@ async fn execute_action(action: &profiles::Action) -> Result<String, String> {
         RestartService { name } => systemd_control::restart_unit(name).await,
         StartContainer { id } => docker_control::start_container(id).await,
         StopContainer { id } => docker_control::stop_container(id).await,
+        FreezeApp { app } => as_result(memory_map::app_action(app, "freeze")),
+        ResumeApp { app } => as_result(memory_map::app_action(app, "resume")),
+        QuitApp { app } => as_result(memory_map::app_action(app, "kill")),
+        SetPowerProfile { profile } => as_result(tuning::set_power_profile(profile)),
     }
 }
 
@@ -787,6 +867,10 @@ async fn apply_profile(
     profile: profiles::Profile,
     dry_run: bool,
 ) -> Result<Vec<ActionOutcome>, String> {
+    Ok(run_profile(&state, &profile, dry_run).await)
+}
+
+async fn run_profile(state: &AppState, profile: &profiles::Profile, dry_run: bool) -> Vec<ActionOutcome> {
     let mut outcomes = Vec::new();
     for action in &profile.actions {
         let description = action.describe();
@@ -803,10 +887,10 @@ async fn apply_profile(
             Ok(m) => (true, m.clone()),
             Err(e) => (false, e.clone()),
         };
-        log_action(&state, &format!("profile:{}", profile.name), ok, &message);
+        log_action(state, &format!("profile:{}", profile.name), ok, &message);
         outcomes.push(ActionOutcome { description, ok, message });
     }
-    Ok(outcomes)
+    outcomes
 }
 
 #[tauri::command]
@@ -1083,6 +1167,347 @@ async fn scan_folder_sizes(path: String) -> Result<Vec<storage_explorer::FolderE
     storage_explorer::scan_folder(&path).await
 }
 
+#[tauri::command]
+async fn get_memory_breakdown() -> Result<memory_map::MemoryBreakdown, String> {
+    tauri::async_runtime::spawn_blocking(memory_map::breakdown)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Runs an action, records it in the audit log, and hands the result back.
+fn logged(state: &AppState, name: &str, r: control_process::ActionResult) -> control_process::ActionResult {
+    log_action(state, name, r.ok, &r.message);
+    r
+}
+
+// New commands below are `command(async)` so that anything which shells out
+// or waits on a password prompt runs off the UI thread.
+
+#[tauri::command(async)]
+fn get_app_memory_history(state: tauri::State<AppState>, since_secs_ago: i64) -> Vec<db::AppMemoryPoint> {
+    state
+        .db
+        .app_memory_history(chrono_now() - since_secs_ago, since_secs_ago / 120)
+}
+
+#[tauri::command(async)]
+fn app_action(state: tauri::State<AppState>, name: String, action: String) -> control_process::ActionResult {
+    let r = memory_map::app_action(&name, &action);
+    logged(&state, &format!("app_{action}:{name}"), r)
+}
+
+#[tauri::command(async)]
+fn limit_app_memory(state: tauri::State<AppState>, name: String, mb: u64) -> control_process::ActionResult {
+    let r = memory_map::limit_app_memory(&name, mb);
+    logged(&state, &format!("limit_app_memory:{name}"), r)
+}
+
+#[tauri::command(async)]
+fn get_pressure_history(state: tauri::State<AppState>, since_secs_ago: i64) -> Vec<db::PressurePoint> {
+    state.db.pressure_history(chrono_now() - since_secs_ago)
+}
+
+#[tauri::command(async)]
+fn get_activity(state: tauri::State<AppState>) -> activity::Activity {
+    activity::sample(&mut state.activity.lock().unwrap())
+}
+
+#[derive(Serialize)]
+struct HealthOverview {
+    report: health::HealthReport,
+    reboot: health::RebootStatus,
+    failed_units: Vec<health::FailedUnit>,
+    batteries: Vec<health::BatteryHealth>,
+    boots: Vec<db::BootPoint>,
+    drives: Vec<health::Drive>,
+}
+
+fn health_inputs(snap: &Snapshot, slow: &SlowHealth, battery_wear_percent: f32) -> health::HealthInputs {
+    health::HealthInputs {
+        mem_available_percent: snap.available_memory_bytes as f32 / snap.total_memory_bytes.max(1) as f32 * 100.0,
+        swap_used_percent: if snap.total_swap_bytes > 0 {
+            snap.used_swap_bytes as f32 / snap.total_swap_bytes as f32 * 100.0
+        } else {
+            0.0
+        },
+        disks: snap
+            .disks
+            .iter()
+            .filter(|d| d.total_bytes > 0)
+            .map(|d| {
+                let used = (d.total_bytes - d.available_bytes) as f32 / d.total_bytes as f32 * 100.0;
+                (d.mount_point.clone(), used)
+            })
+            .collect(),
+        max_temp_c: snap.temperatures.iter().map(|t| t.celsius).fold(0.0, f32::max),
+        pressure: snap.pressure.clone(),
+        failed_units: slow.failed_units,
+        reboot_needed: slow.reboot_needed,
+        battery_wear_percent,
+    }
+}
+
+#[tauri::command(async)]
+fn get_health(state: tauri::State<AppState>) -> HealthOverview {
+    let snap = take_snapshot(&state);
+    let reboot = health::reboot_status();
+    let failed_units = health::failed_units();
+    let batteries = health::battery_health();
+    let slow = SlowHealth {
+        failed_units: failed_units.len(),
+        reboot_needed: reboot.reboot_needed,
+    };
+    *state.slow_health.lock().unwrap() = slow.clone();
+    let wear = batteries.iter().map(|b| b.wear_percent).fold(0.0, f32::max);
+    HealthOverview {
+        report: health::health_report(&health_inputs(&snap, &slow, wear)),
+        reboot,
+        failed_units,
+        batteries,
+        boots: state.db.boot_history(),
+        drives: health::list_drives(),
+    }
+}
+
+#[tauri::command(async)]
+fn get_oom_kills() -> Vec<health::LogLine> {
+    health::oom_kills()
+}
+
+#[tauri::command(async)]
+fn get_recent_errors() -> Vec<health::LogLine> {
+    health::recent_errors()
+}
+
+#[tauri::command(async)]
+fn check_drive_health() -> Result<Vec<health::DriveHealth>, String> {
+    health::drive_health()
+}
+
+#[tauri::command(async)]
+fn get_memory_tuning() -> tuning::MemoryTuning {
+    tuning::memory_tuning()
+}
+
+#[tauri::command(async)]
+fn set_swappiness(state: tauri::State<AppState>, value: u32) -> control_process::ActionResult {
+    logged(&state, "set_swappiness", tuning::set_swappiness(value))
+}
+
+#[tauri::command(async)]
+fn drop_caches(state: tauri::State<AppState>) -> control_process::ActionResult {
+    logged(&state, "drop_caches", tuning::drop_caches())
+}
+
+#[tauri::command(async)]
+fn compact_memory(state: tauri::State<AppState>) -> control_process::ActionResult {
+    logged(&state, "compact_memory", tuning::compact_memory())
+}
+
+#[tauri::command(async)]
+fn flush_swap(state: tauri::State<AppState>) -> control_process::ActionResult {
+    logged(&state, "flush_swap", tuning::flush_swap())
+}
+
+#[tauri::command(async)]
+fn get_cpu_power() -> tuning::CpuPower {
+    tuning::cpu_power()
+}
+
+#[tauri::command(async)]
+fn set_power_profile(state: tauri::State<AppState>, profile: String) -> control_process::ActionResult {
+    logged(&state, "set_power_profile", tuning::set_power_profile(&profile))
+}
+
+#[tauri::command(async)]
+fn set_cpu_governor(state: tauri::State<AppState>, governor: String) -> control_process::ActionResult {
+    logged(&state, "set_cpu_governor", tuning::set_governor(&governor))
+}
+
+#[tauri::command(async)]
+fn set_energy_preference(state: tauri::State<AppState>, preference: String) -> control_process::ActionResult {
+    logged(&state, "set_energy_preference", tuning::set_energy_preference(&preference))
+}
+
+#[tauri::command(async)]
+fn set_platform_profile(state: tauri::State<AppState>, profile: String) -> control_process::ActionResult {
+    logged(&state, "set_platform_profile", tuning::set_platform_profile(&profile))
+}
+
+#[tauri::command(async)]
+fn set_core_online(state: tauri::State<AppState>, index: u32, online: bool) -> control_process::ActionResult {
+    logged(&state, "set_core_online", tuning::set_core_online(index, online))
+}
+
+#[tauri::command(async)]
+fn list_fans() -> Vec<tuning::Fan> {
+    tuning::list_fans()
+}
+
+#[tauri::command(async)]
+fn set_fan_mode(state: tauri::State<AppState>, pwm_path: String, mode: String, percent: u32) -> control_process::ActionResult {
+    logged(&state, "set_fan_mode", tuning::set_fan_mode(&pwm_path, &mode, percent))
+}
+
+#[tauri::command(async)]
+fn get_automation() -> automation::Config {
+    automation::load()
+}
+
+#[tauri::command(async)]
+fn save_automation(config: automation::Config) -> Result<(), String> {
+    automation::save(&config)
+}
+
+#[tauri::command(async)]
+fn get_package_status() -> packages::PackageStatus {
+    packages::status()
+}
+
+#[tauri::command(async)]
+fn clean_package_cache(state: tauri::State<AppState>) -> control_process::ActionResult {
+    logged(&state, "clean_package_cache", packages::clean_cache())
+}
+
+#[tauri::command(async)]
+fn remove_orphan_packages(state: tauri::State<AppState>) -> control_process::ActionResult {
+    logged(&state, "remove_orphan_packages", packages::remove_orphans())
+}
+
+#[tauri::command(async)]
+fn get_firewall_status() -> connectivity::FirewallStatus {
+    connectivity::firewall_status()
+}
+
+#[tauri::command(async)]
+fn set_firewall_port(
+    state: tauri::State<AppState>,
+    port: u16,
+    protocol: String,
+    open: bool,
+    permanent: bool,
+) -> control_process::ActionResult {
+    logged(
+        &state,
+        "set_firewall_port",
+        connectivity::set_firewall_port(port, &protocol, open, permanent),
+    )
+}
+
+#[tauri::command(async)]
+fn list_radios() -> Vec<connectivity::Radio> {
+    connectivity::list_radios()
+}
+
+#[tauri::command(async)]
+fn set_radio(state: tauri::State<AppState>, kind: String, enabled: bool) -> control_process::ActionResult {
+    logged(&state, "set_radio", connectivity::set_radio(&kind, enabled))
+}
+
+#[tauri::command(async)]
+fn list_wifi(rescan: bool) -> Vec<connectivity::WifiNetwork> {
+    connectivity::list_wifi(rescan)
+}
+
+#[tauri::command(async)]
+fn connect_wifi(state: tauri::State<AppState>, ssid: String, password: Option<String>) -> control_process::ActionResult {
+    logged(&state, "connect_wifi", connectivity::connect_wifi(&ssid, password.as_deref()))
+}
+
+#[tauri::command(async)]
+fn list_bluetooth() -> Vec<connectivity::BluetoothDevice> {
+    connectivity::list_bluetooth()
+}
+
+#[tauri::command(async)]
+fn set_bluetooth_connected(state: tauri::State<AppState>, address: String, connect: bool) -> control_process::ActionResult {
+    logged(
+        &state,
+        "set_bluetooth_connected",
+        connectivity::set_bluetooth_connected(&address, connect),
+    )
+}
+
+#[derive(Serialize)]
+struct DisplayStatus {
+    monitors: Vec<connectivity::Monitor>,
+    night_light_kelvin: Option<u32>,
+}
+
+#[tauri::command(async)]
+fn get_display_status() -> DisplayStatus {
+    DisplayStatus {
+        monitors: connectivity::list_monitors(),
+        night_light_kelvin: connectivity::night_light(),
+    }
+}
+
+#[tauri::command(async)]
+fn set_monitor_mode(state: tauri::State<AppState>, name: String, mode: String, scale: f64) -> control_process::ActionResult {
+    logged(&state, "set_monitor_mode", connectivity::set_monitor_mode(&name, &mode, scale))
+}
+
+#[tauri::command(async)]
+fn set_night_light(state: tauri::State<AppState>, kelvin: Option<u32>) -> control_process::ActionResult {
+    logged(&state, "set_night_light", connectivity::set_night_light(kelvin))
+}
+
+/// One pass of everything the background loop does besides sampling:
+/// per-app memory history, rules, scheduled profiles and alerts.
+fn background_tick(state: &AppState, snap: &Snapshot, tick: u64) {
+    let now = chrono_now();
+    let config = automation::load();
+
+    if tick % 30 == 0 {
+        *state.slow_health.lock().unwrap() = SlowHealth {
+            failed_units: health::failed_units().len(),
+            reboot_needed: health::reboot_status().reboot_needed,
+        };
+    }
+
+    if tick % 6 == 0 {
+        let apps = memory_map::breakdown().apps;
+        let top: Vec<(String, u64, u64)> = apps
+            .iter()
+            .take(20)
+            .map(|a| (a.name.clone(), a.ram_bytes, a.swap_bytes))
+            .collect();
+        state.db.insert_app_memory(now, &top);
+        let outcomes = automation::evaluate_rules(&config, &apps, &mut state.automation.lock().unwrap(), now);
+        for o in outcomes {
+            log_action(state, &o.description, o.ok, &o.message);
+        }
+    }
+
+    let due = automation::due_schedules(&config, &mut state.automation.lock().unwrap());
+    if !due.is_empty() {
+        let profiles = profiles::list_profiles();
+        for name in due {
+            match profiles.iter().find(|p| p.name == name) {
+                Some(profile) => {
+                    let outcomes = tauri::async_runtime::block_on(run_profile(state, profile, false));
+                    let failed = outcomes.iter().filter(|o| !o.ok).count();
+                    sys_util::notify(
+                        &format!("Trace ran profile “{name}”"),
+                        &format!("{} action(s), {failed} failed", outcomes.len()),
+                        false,
+                    );
+                }
+                None => log_action(state, &format!("schedule:{name}"), false, "Profile no longer exists"),
+            }
+        }
+    }
+
+    if config.alerts_enabled {
+        let slow = state.slow_health.lock().unwrap().clone();
+        let report = health::health_report(&health_inputs(snap, &slow, 0.0));
+        let mut automation = state.automation.lock().unwrap();
+        for issue in report.issues.iter().filter(|i| i.severity == "critical") {
+            automation.alert(&issue.title, &issue.detail, now);
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1093,18 +1518,34 @@ pub fn run() {
             db: db::Db::open(),
             last_snapshot: Mutex::new(None),
             clipboard_history: Mutex::new(std::collections::VecDeque::new()),
+            activity: Mutex::new(activity::ActivityState::default()),
+            automation: Mutex::new(automation::State::default()),
+            slow_health: Mutex::new(SlowHealth::default()),
         })
         .setup(|app| {
             profiles::ensure_default_profiles();
             let handle = app.handle().clone();
-            std::thread::spawn(move || loop {
+            std::thread::spawn(move || {
                 {
                     let state = handle.state::<AppState>();
-                    let snap = take_snapshot(&state);
-                    record_snapshot(&state, &snap);
-                    poll_clipboard(&state);
+                    state.db.prune_app_memory(chrono_now() - 14 * 86_400);
+                    if let Some(boot) = health::boot_time() {
+                        let booted_at = chrono_now() - System::uptime() as i64;
+                        state.db.record_boot(&boot.boot_id, booted_at, boot.total_ms, boot.userspace_ms);
+                    }
                 }
-                std::thread::sleep(std::time::Duration::from_secs(10));
+                let mut tick: u64 = 0;
+                loop {
+                    {
+                        let state = handle.state::<AppState>();
+                        let snap = take_snapshot(&state);
+                        record_snapshot(&state, &snap);
+                        poll_clipboard(&state);
+                        background_tick(&state, &snap, tick);
+                    }
+                    tick += 1;
+                    std::thread::sleep(std::time::Duration::from_secs(10));
+                }
             });
             Ok(())
         })
@@ -1165,8 +1606,134 @@ pub fn run() {
             set_gpu_clock_lock,
             reset_gpu_clock_lock,
             list_namespaces,
-            scan_folder_sizes
+            scan_folder_sizes,
+            get_memory_breakdown,
+            get_app_memory_history,
+            app_action,
+            limit_app_memory,
+            get_pressure_history,
+            get_activity,
+            get_health,
+            get_oom_kills,
+            get_recent_errors,
+            check_drive_health,
+            get_memory_tuning,
+            set_swappiness,
+            drop_caches,
+            compact_memory,
+            flush_swap,
+            get_cpu_power,
+            set_power_profile,
+            set_cpu_governor,
+            set_energy_preference,
+            set_platform_profile,
+            set_core_online,
+            list_fans,
+            set_fan_mode,
+            get_automation,
+            save_automation,
+            get_package_status,
+            clean_package_cache,
+            remove_orphan_packages,
+            get_firewall_status,
+            set_firewall_port,
+            list_radios,
+            set_radio,
+            list_wifi,
+            connect_wifi,
+            list_bluetooth,
+            set_bluetooth_connected,
+            get_display_status,
+            set_monitor_mode,
+            set_night_light
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Exercises every read-only collector against the real machine. Set
+    /// `TRACE_DUMP_DIR` to also write each result as JSON (handy as UI fixtures).
+    #[test]
+    fn live_readers_do_not_panic() {
+        let state = AppState {
+            sys: Mutex::new(System::new_all()),
+            last_net: Mutex::new(std::collections::HashMap::new()),
+            db: db::Db::open(),
+            last_snapshot: Mutex::new(None),
+            clipboard_history: Mutex::new(std::collections::VecDeque::new()),
+            activity: Mutex::new(activity::ActivityState::default()),
+            automation: Mutex::new(automation::State::default()),
+            slow_health: Mutex::new(SlowHealth::default()),
+        };
+        let snap = take_snapshot(&state);
+        assert!(snap.total_memory_bytes > 0);
+
+        activity::sample(&mut state.activity.lock().unwrap());
+        std::thread::sleep(std::time::Duration::from_millis(1200));
+        let act = activity::sample(&mut state.activity.lock().unwrap());
+        assert!(act.ready);
+
+        let slow = SlowHealth {
+            failed_units: health::failed_units().len(),
+            reboot_needed: health::reboot_status().reboot_needed,
+        };
+        let report = health::health_report(&health_inputs(&snap, &slow, 0.0));
+        assert!(report.score <= 100);
+
+        let Ok(dir) = std::env::var("TRACE_DUMP_DIR") else {
+            return;
+        };
+        let dump = |name: &str, value: serde_json::Value| {
+            fs::write(format!("{dir}/{name}.json"), value.to_string()).unwrap();
+        };
+        let json = |v: &dyn erased::Dump| v.dump();
+        dump("get_snapshot", json(&snap));
+        dump("get_activity", json(&act));
+        dump("get_memory_breakdown", json(&memory_map::breakdown()));
+        dump(
+            "get_health",
+            serde_json::json!({
+                "report": report,
+                "reboot": health::reboot_status(),
+                "failed_units": health::failed_units(),
+                "batteries": health::battery_health(),
+                "boots": health::boot_time().map(|b| vec![serde_json::json!({
+                    "ts": chrono_now(), "total_ms": b.total_ms, "userspace_ms": b.userspace_ms
+                })]).unwrap_or_default(),
+                "drives": health::list_drives(),
+            }),
+        );
+        dump("get_recent_errors", json(&health::recent_errors()));
+        dump("get_memory_tuning", json(&tuning::memory_tuning()));
+        dump("get_cpu_power", json(&tuning::cpu_power()));
+        dump("list_fans", json(&tuning::list_fans()));
+        dump("get_firewall_status", json(&connectivity::firewall_status()));
+        dump("list_radios", json(&connectivity::list_radios()));
+        dump("list_wifi", json(&connectivity::list_wifi(false)));
+        dump("list_bluetooth", json(&connectivity::list_bluetooth()));
+        dump(
+            "get_display_status",
+            serde_json::json!({
+                "monitors": connectivity::list_monitors(),
+                "night_light_kelvin": connectivity::night_light(),
+            }),
+        );
+        dump("get_automation", json(&automation::Config::default()));
+        dump("list_profiles", json(&profiles::list_profiles()));
+    }
+
+    mod erased {
+        pub trait Dump {
+            fn dump(&self) -> serde_json::Value;
+        }
+        impl<T: serde::Serialize> Dump for T {
+            fn dump(&self) -> serde_json::Value {
+                serde_json::to_value(self).unwrap()
+            }
+        }
+    }
 }
