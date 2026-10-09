@@ -7,6 +7,7 @@ import {
   useAction,
   usePoll,
 } from "./ui";
+import { Leaks } from "./Batch3";
 
 interface MemoryCategory {
   key: string;
@@ -560,6 +561,7 @@ export default function MemoryMap() {
   return (
     <>
       <Rescue data={data} onChange={reload} />
+      <Leaks />
       <Distribution data={data} />
       <Apps data={data} onChange={reload} />
       <Growth />

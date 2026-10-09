@@ -2397,3 +2397,59 @@ code {
   border-radius: 4px;
   padding: 1px 5px;
 }
+
+/* ---- check-up findings, focus chips ---- */
+.status-warn {
+  color: #e0b34a;
+}
+
+.finding {
+  border-top: 1px solid #1f2330;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 0;
+}
+
+.finding > .mem-muted {
+  font-size: 12px;
+}
+
+.chip-on {
+  background: #2a1a18;
+  border-color: #e0503e;
+  color: #e6e8ee;
+}
+
+.grow-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.status-warn,
+.finding strong {
+  font-size: 13px;
+}
+
+.plain-row {
+  color: #b3b8c4;
+  font-size: 12px;
+  padding: 3px 0;
+}
+
+.wifi-row {
+  align-items: center;
+  border-top: 1px solid #1f2330;
+  display: flex;
+  gap: 6px;
+  padding: 6px 0;
+}
+
+.wifi-name {
+  flex: 1;
+  font-size: 13px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

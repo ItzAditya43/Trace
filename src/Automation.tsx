@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Segmented, usePoll } from "./ui";
+import { FocusMode } from "./Batch3";
 
 interface Rule {
   id: string;
@@ -49,7 +50,8 @@ type BuilderAction =
   | { type: "FreezeApp" | "ResumeApp" | "QuitApp"; app: string }
   | { type: "SetPowerProfile"; profile: string }
   | { type: "StartService" | "StopService" | "RestartService"; name: string }
-  | { type: "ApplyPreset"; preset: string };
+  | { type: "ApplyPreset"; preset: string }
+  | { type: "RunCommand"; command: string };
 
 interface Profile {
   name: string;
@@ -72,6 +74,7 @@ const BUILDER_TYPES: { type: BuilderAction["type"]; label: string; field: string
   { type: "QuitApp", label: "Quit app", field: "app" },
   { type: "SetPowerProfile", label: "Set power profile", field: "profile" },
   { type: "ApplyPreset", label: "Apply settings preset", field: "preset" },
+  { type: "RunCommand", label: "Run my own command", field: "command" },
   { type: "StartService", label: "Start service", field: "name" },
   { type: "StopService", label: "Stop service", field: "name" },
   { type: "RestartService", label: "Restart service", field: "name" },
@@ -509,7 +512,7 @@ function ProfileBuilder({ apps, onSaved }: { apps: string[]; onSaved: () => void
         {actions.map((a, i) => (
           <li key={i}>
             {BUILDER_TYPES.find((t) => t.type === a.type)!.label}:{" "}
-            {"app" in a ? a.app : "profile" in a ? a.profile : "preset" in a ? a.preset : a.name}{" "}
+            {"app" in a ? a.app : "profile" in a ? a.profile : "preset" in a ? a.preset : "command" in a ? a.command : a.name}{" "}
             <button
               className="chip chip-button"
               onClick={() => setActions(actions.filter((_, j) => j !== i))}
@@ -545,6 +548,8 @@ function ProfileBuilder({ apps, onSaved }: { apps: string[]; onSaved: () => void
                 ? "performance"
                 : spec.field === "preset"
                 ? "Gaming (a preset name from Tweaks)"
+                : spec.field === "command"
+                ? "~/bin/my-script.sh, or any shell command"
                 : "bluetooth.service"
             }
             value={target}
@@ -627,6 +632,7 @@ export default function Automation({ onProfilesChanged }: { onProfilesChanged: (
       </section>
       <Rules config={config.data} save={save} apps={apps} />
       <Sleepers config={config.data} save={save} apps={apps} />
+      <FocusMode apps={apps} />
       <Schedules
         config={config.data}
         save={save}

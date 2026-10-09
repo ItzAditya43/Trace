@@ -1,6 +1,7 @@
 mod activity;
 mod automation;
 mod autostart;
+mod batch3;
 mod connectivity;
 mod control_process;
 mod db;
@@ -774,6 +775,19 @@ async fn execute_action(state: &AppState, action: &profiles::Action, unattended:
         ResumeApp { app } => as_result(memory_map::app_action(app, "resume")),
         QuitApp { app } => as_result(memory_map::app_action(app, "kill")),
         SetPowerProfile { profile } => as_result(tuning::set_power_profile(profile)),
+        RunCommand { command } => {
+            // Your own command, run as you — the hook for anything Trace doesn't do itself.
+            use std::os::unix::process::CommandExt;
+            Command::new("sh")
+                .args(["-c", command])
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .process_group(0)
+                .spawn()
+                .map(|_| format!("Started: {command}"))
+                .map_err(|e| e.to_string())
+        }
         ApplyPreset { preset } => {
             let changes = tweak_presets::changes_for(preset, &tweaks::list(&state.db))
                 .ok_or_else(|| format!("No settings preset called {preset}"))?;
@@ -1647,6 +1661,113 @@ fn get_data_usage(state: tauri::State<AppState>) -> Vec<more::DataUsage> {
 }
 
 #[tauri::command(async)]
+fn get_focus() -> Option<batch3::Focus> {
+    batch3::focus_current()
+}
+
+#[tauri::command(async)]
+fn set_focus(state: tauri::State<AppState>, apps: Vec<String>, minutes: u32) -> control_process::ActionResult {
+    let r = if minutes == 0 {
+        match batch3::focus_end() {
+            Some(apps) => sys_util::ok(format!("Focus ended: {} resumed", apps.join(", "))),
+            None => sys_util::err("No focus session is running"),
+        }
+    } else {
+        batch3::focus_start(apps, minutes, chrono_now())
+    };
+    logged(&state, "focus", r)
+}
+
+#[tauri::command(async)]
+fn get_security_report() -> batch3::SecurityReport {
+    batch3::security_report()
+}
+
+#[tauri::command(async)]
+fn get_media_use() -> batch3::MediaUse {
+    batch3::media_use()
+}
+
+#[tauri::command(async)]
+fn list_saved_wifi() -> Vec<batch3::SavedWifi> {
+    batch3::saved_wifi()
+}
+
+#[tauri::command(async)]
+fn saved_wifi_action(state: tauri::State<AppState>, uuid: String, action: String) -> control_process::ActionResult {
+    let r = batch3::wifi_action(&uuid, &action);
+    // The password itself must never land in the action log.
+    if action == "password" {
+        log_action(&state, "wifi_show_password", r.ok, "shown on request");
+        return r;
+    }
+    logged(&state, &format!("wifi_{action}"), r)
+}
+
+#[tauri::command(async)]
+fn get_privacy_items() -> Vec<batch3::PrivacyItem> {
+    batch3::privacy_items()
+}
+
+#[tauri::command(async)]
+fn clean_privacy_item(state: tauri::State<AppState>, id: String) -> control_process::ActionResult {
+    logged(&state, &format!("privacy_clean:{id}"), batch3::privacy_clean(&id))
+}
+
+#[tauri::command(async)]
+fn run_restricted(
+    state: tauri::State<AppState>,
+    command: String,
+    no_network: bool,
+    memory_mb: Option<u64>,
+    cpu_percent: Option<u32>,
+) -> control_process::ActionResult {
+    logged(&state, "run_restricted", batch3::run_restricted(&command, no_network, memory_mb, cpu_percent))
+}
+
+#[tauri::command(async)]
+fn run_stress_test(state: tauri::State<AppState>, seconds: u64) -> batch3::StressResult {
+    let result = batch3::stress_test(seconds);
+    log_action(&state, "stress_test", true, &format!("peak {:.0}°C — {}", result.peak_c, result.verdict));
+    result
+}
+
+#[tauri::command(async)]
+fn export_settings(state: tauri::State<AppState>) -> control_process::ActionResult {
+    match batch3::export_settings(&state.db) {
+        Ok(path) => sys_util::ok(format!("Saved to {path}")),
+        Err(e) => sys_util::err(e),
+    }
+}
+
+#[tauri::command(async)]
+fn import_settings(state: tauri::State<AppState>, path: String) -> control_process::ActionResult {
+    let r = match batch3::import_settings(&state.db, &path) {
+        Ok(message) => sys_util::ok(message),
+        Err(e) => sys_util::err(e),
+    };
+    logged(&state, "import_settings", r)
+}
+
+#[tauri::command(async)]
+fn get_leaks(state: tauri::State<AppState>) -> Vec<batch3::Leak> {
+    batch3::leaks(&state.db, chrono_now())
+}
+
+#[tauri::command(async)]
+fn start_drive_self_test(state: tauri::State<AppState>, device: String) -> control_process::ActionResult {
+    let known = health::list_drives().iter().any(|d| d.device == device) && sys_util::is_safe_token(&device);
+    if !known {
+        return sys_util::err("Not a drive");
+    }
+    let r = sys_util::privileged_action(
+        &format!("smartctl -t short /dev/{device}"),
+        format!("Short self-test started on {device}; it takes about two minutes. Press “Check drive health” afterwards to see the result."),
+    );
+    logged(&state, "drive_self_test", r)
+}
+
+#[tauri::command(async)]
 fn get_ports() -> hardware::Ports {
     hardware::ports()
 }
@@ -2307,6 +2428,7 @@ fn background_tick(state: &AppState, snap: &Snapshot, tick: u64) {
             log_action(state, &description, ok, &message);
         }
     }
+    batch3::focus_tick(now);
     let due_action = extras::tick_pending(&mut state.pending.lock().unwrap(), now);
     if let Some(action) = due_action {
         let r = if action == "awake_off" {
@@ -2438,6 +2560,8 @@ pub fn run() {
             // Apps listed to sleep when unused are checked every second, so
             // one wakes the moment you click back into it.
             extras::recover_frozen();
+            // A focus session that outlived the last run: wake its apps if the time has passed.
+            batch3::focus_tick(chrono_now());
             let sleeper_handle = app.handle().clone();
             std::thread::spawn(move || loop {
                 std::thread::sleep(std::time::Duration::from_secs(1));
@@ -2545,6 +2669,20 @@ pub fn run() {
             list_namespaces,
             scan_folder_sizes,
             get_memory_breakdown,
+            get_security_report,
+            get_focus,
+            set_focus,
+            get_media_use,
+            list_saved_wifi,
+            saved_wifi_action,
+            get_privacy_items,
+            clean_privacy_item,
+            run_restricted,
+            run_stress_test,
+            export_settings,
+            import_settings,
+            get_leaks,
+            start_drive_self_test,
             run_connection_doctor,
             list_listeners,
             get_project_junk,
@@ -2658,6 +2796,7 @@ pub fn run() {
                 tweaks::release_keep_awake();
                 // Never leave an app frozen behind.
                 app.state::<AppState>().sleepers.lock().unwrap().wake_all();
+                batch3::focus_end();
             }
         });
 }
@@ -2778,6 +2917,11 @@ mod tests {
         );
         dump("list_timers", json(&extras::timers()));
         dump("get_ports", json(&hardware::ports()));
+        dump("get_security_report", json(&batch3::security_report()));
+        dump("get_media_use", json(&batch3::media_use()));
+        dump("list_saved_wifi", json(&batch3::saved_wifi()));
+        dump("get_privacy_items", json(&batch3::privacy_items()));
+        dump("get_leaks", json(&batch3::leaks(&state.db, chrono_now())));
         dump("run_connection_doctor", json(&more::connection_doctor()));
         dump("list_listeners", json(&more::listeners()));
         dump("get_project_junk", json(&more::project_junk(env!("CARGO_MANIFEST_DIR"))));

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Sparkline, bytesToHuman, formatDay, usePoll } from "./ui";
 import { BatteryCareCard } from "./More";
+import { MediaUseCard, SecurityCheckup } from "./Batch3";
 
 interface Issue {
   severity: "critical" | "warn" | "info";
@@ -149,6 +150,7 @@ function LogPanel({
 function Drives({ drives }: { drives: HealthOverview["drives"] }) {
   const [health, setHealth] = useState<DriveHealth[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   async function check() {
@@ -207,8 +209,23 @@ function Drives({ drives }: { drives: HealthOverview["drives"] }) {
         <button className="ctl-btn" onClick={check} disabled={busy}>
           {busy ? "Waiting for authorization…" : "Check drive health"}
         </button>
+        {drives.map((d) => (
+          <button
+            key={d.device}
+            className="ctl-btn"
+            disabled={busy}
+            onClick={async () => {
+              const r = await invoke<{ ok: boolean; message: string }>("start_drive_self_test", { device: d.device });
+              setError(r.ok ? null : r.message);
+              setNote(r.ok ? r.message : null);
+            }}
+          >
+            Self-test {d.device}
+          </button>
+        ))}
       </div>
       {error && <p className="status-fail">✗ {error}</p>}
+      {note && <p className="status-ok">✓ {note}</p>}
       <p className="diagnose-hint">
         Drive self-test data (SMART) is only readable by root, so checking it
         asks for your password. "Wear" is how much of an SSD's rated lifetime
@@ -318,6 +335,8 @@ export default function Health() {
       ))}
 
       <BatteryCareCard />
+      <SecurityCheckup />
+      <MediaUseCard />
 
       <section className="panel">
         <h2>Boot Time</h2>

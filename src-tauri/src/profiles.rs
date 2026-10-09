@@ -21,6 +21,8 @@ pub enum Action {
     SetPowerProfile { profile: String },
     /// A Tweaks preset, by id (built-in) or name (saved).
     ApplyPreset { preset: String },
+    /// Runs a shell command of the user's own, as the user.
+    RunCommand { command: String },
 }
 
 impl Action {
@@ -45,6 +47,7 @@ impl Action {
             Action::SetPowerProfile { .. } => None,
             // Undo a preset from Tweaks → Recent changes, which knows the old values.
             Action::ApplyPreset { .. } => None,
+            Action::RunCommand { .. } => None,
         }
     }
 
@@ -69,6 +72,7 @@ impl Action {
             Action::QuitApp { app } => format!("Quit {app}"),
             Action::SetPowerProfile { profile } => format!("Switch power profile to {profile}"),
             Action::ApplyPreset { preset } => format!("Apply the “{preset}” settings preset"),
+            Action::RunCommand { command } => format!("Run: {command}"),
         }
     }
 }

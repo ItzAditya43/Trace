@@ -10,6 +10,7 @@ import {
   useAction,
   usePoll,
 } from "./ui";
+import { StressTest } from "./Batch3";
 
 interface Sensor {
   chip: string;
@@ -711,6 +712,7 @@ export default function Hardware() {
       <PortsCard />
       <FanControl />
       <ThermalRules />
+      <StressTest />
       <CpuPowerControl />
       <Graphics gpus={data.gpus} />
       <Brightness builtin={data.backlight_percent} />

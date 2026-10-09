@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { SettingsTransfer } from "./Batch3";
 import { Segmented, StatusLine, formatClock, formatDay, useAction, usePoll } from "./ui";
 
 interface Config {
@@ -78,6 +79,8 @@ export default function AppSettings() {
         </p>
       )}
       <StatusLine result={result} />
+
+      <SettingsTransfer />
 
       <h3 className="sub-heading">Alerts Trace has sent</h3>
       {(sent.data ?? []).length === 0 && <p className="diagnose-hint">None yet.</p>}

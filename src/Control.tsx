@@ -4,6 +4,7 @@ import { NavContext } from "./nav";
 import AppSettings from "./AppSettings";
 import { ScheduledJobs, TimersControl } from "./Quick";
 import { ConnectionDoctor, DataBudgets, ListeningPorts } from "./More";
+import { PrivacyCleaner, RunRestricted, SavedWifiCard } from "./Batch3";
 import { invoke } from "@tauri-apps/api/core";
 import Automation from "./Automation";
 import Packages from "./Packages";
@@ -55,7 +56,8 @@ type ProfileAction =
   | { type: "ResumeApp"; app: string }
   | { type: "QuitApp"; app: string }
   | { type: "SetPowerProfile"; profile: string }
-  | { type: "ApplyPreset"; preset: string };
+  | { type: "ApplyPreset"; preset: string }
+  | { type: "RunCommand"; command: string };
 
 interface Profile {
   name: string;
@@ -1199,6 +1201,8 @@ function describeAction(a: ProfileAction): string {
       return `Switch power profile to ${a.profile}`;
     case "ApplyPreset":
       return `Apply the “${a.preset}” settings preset`;
+    case "RunCommand":
+      return `Run: ${a.command}`;
   }
 }
 
@@ -1278,6 +1282,7 @@ export default function Control() {
         <>
           <ProcessControl />
           <ListeningPorts />
+          <RunRestricted />
           <WindowControl />
           <NamespaceControl />
         </>
@@ -1298,6 +1303,7 @@ export default function Control() {
           <VpnControl />
           <ConnectionDoctor />
           <DataBudgets />
+          <SavedWifiCard />
           <WirelessControl />
           <FirewallControl />
           <NetworkControl />
@@ -1332,6 +1338,7 @@ export default function Control() {
         <>
           <Packages />
           <CleanupControl />
+          <PrivacyCleaner />
         </>
       )}
     </div>
