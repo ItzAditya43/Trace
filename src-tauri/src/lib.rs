@@ -1777,11 +1777,6 @@ fn get_app_info(app: tauri::AppHandle, state: tauri::State<AppState>) -> AppInfo
 
 // ---- tray ----
 
-struct TrayHandles {
-    tray: tauri::tray::TrayIcon,
-    stats: tauri::menu::MenuItem<tauri::Wry>,
-}
-
 fn show_main_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         use tauri::Emitter;
@@ -1792,57 +1787,150 @@ fn show_main_window(app: &tauri::AppHandle) {
     }
 }
 
-/// Builds the tray icon. Fails harmlessly on desktops without tray support,
-/// in which case closing the window simply quits as before.
-fn build_tray(app: &tauri::App) -> tauri::Result<TrayHandles> {
-    use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
-    let stats = MenuItemBuilder::with_id("stats", "Trace is starting…").enabled(false).build(app)?;
-    let mut power = SubmenuBuilder::new(app, "Power profile");
-    for profile in tuning::cpu_power().available_power_profiles {
-        power = power.text(format!("power:{profile}"), profile.replace('-', " "));
+/// The tray icon. Implemented directly on the StatusNotifierItem protocol
+/// (rather than through the toolkit's indicator library) because that is
+/// the only way to receive a plain left click.
+struct TraceTray {
+    app: tauri::AppHandle,
+    stats: String,
+    profiles: Vec<String>,
+    icon: Vec<ksni::Icon>,
+}
+
+type TrayHandles = ksni::blocking::Handle<TraceTray>;
+
+fn toggle_main_window(app: &tauri::AppHandle) {
+    use tauri::Emitter;
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    if window.is_visible().unwrap_or(false) {
+        window.hide().ok();
+        window.emit("trace-visible", false).ok();
+    } else {
+        show_main_window(app);
     }
-    let menu = MenuBuilder::new(app)
-        .item(&stats)
-        .separator()
-        .text("open", "Open Trace")
-        .item(&power.build()?)
-        .text("awake_on", "Keep awake: turn on")
-        .text("awake_off", "Keep awake: turn off")
-        .separator()
-        .text("quit", "Quit Trace")
-        .build()?;
-    let mut builder = tauri::tray::TrayIconBuilder::with_id("main")
-        .menu(&menu)
-        .tooltip("Trace")
-        .on_menu_event(|app, event| {
-            let id = event.id().as_ref().to_string();
+}
+
+impl TraceTray {
+    /// Applies one setting from a menu click, off the tray's own thread.
+    fn tweak(&self, id: &'static str, value: String) {
+        let app = self.app.clone();
+        std::thread::spawn(move || {
             let state = app.state::<AppState>();
-            let tweak = |tweak_id: &str, value: &str| {
-                let change = tweaks::Change { id: tweak_id.to_string(), value: value.to_string() };
-                let results = tweaks::apply(&state.db, &[change], "tray", None);
-                log_tweak_results(&state, "tray", &results);
-            };
-            match id.as_str() {
-                "open" => show_main_window(app),
-                "quit" => app.exit(0),
-                "awake_on" => tweak("power.keep_awake", "on"),
-                "awake_off" => tweak("power.keep_awake", "off"),
-                other => {
-                    if let Some(profile) = other.strip_prefix("power:") {
-                        tweak("power.profile", profile);
-                    }
-                }
-            }
+            let change = tweaks::Change { id: id.to_string(), value };
+            let results = tweaks::apply(&state.db, &[change], "tray", None);
+            log_tweak_results(&state, "tray", &results);
         });
-    if let Some(icon) = app.default_window_icon() {
-        builder = builder.icon(icon.clone());
     }
-    Ok(TrayHandles { tray: builder.build(app)?, stats })
+}
+
+impl ksni::Tray for TraceTray {
+    fn id(&self) -> String {
+        "trace".into()
+    }
+    fn title(&self) -> String {
+        "Trace".into()
+    }
+    fn icon_pixmap(&self) -> Vec<ksni::Icon> {
+        self.icon.clone()
+    }
+    fn tool_tip(&self) -> ksni::ToolTip {
+        ksni::ToolTip {
+            title: "Trace".into(),
+            description: self.stats.clone(),
+            ..Default::default()
+        }
+    }
+    /// Left click: show the window, or hide it if it is showing.
+    fn activate(&mut self, _x: i32, _y: i32) {
+        toggle_main_window(&self.app);
+    }
+    fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
+        use ksni::menu::{StandardItem, SubMenu};
+        let profiles = self
+            .profiles
+            .iter()
+            .map(|profile| {
+                let value = profile.clone();
+                StandardItem {
+                    label: profile.replace('-', " "),
+                    activate: Box::new(move |tray: &mut Self| tray.tweak("power.profile", value.clone())),
+                    ..Default::default()
+                }
+                .into()
+            })
+            .collect();
+        vec![
+            StandardItem { label: self.stats.clone(), enabled: false, ..Default::default() }.into(),
+            ksni::MenuItem::Separator,
+            StandardItem {
+                label: "Show / hide Trace".into(),
+                activate: Box::new(|tray: &mut Self| toggle_main_window(&tray.app)),
+                ..Default::default()
+            }
+            .into(),
+            SubMenu { label: "Power profile".into(), submenu: profiles, ..Default::default() }.into(),
+            StandardItem {
+                label: "Keep awake: turn on".into(),
+                activate: Box::new(|tray: &mut Self| tray.tweak("power.keep_awake", "on".into())),
+                ..Default::default()
+            }
+            .into(),
+            StandardItem {
+                label: "Keep awake: turn off".into(),
+                activate: Box::new(|tray: &mut Self| tray.tweak("power.keep_awake", "off".into())),
+                ..Default::default()
+            }
+            .into(),
+            ksni::MenuItem::Separator,
+            StandardItem {
+                label: "Quit Trace".into(),
+                activate: Box::new(|tray: &mut Self| tray.app.exit(0)),
+                ..Default::default()
+            }
+            .into(),
+        ]
+    }
+}
+
+/// The app icon shrunk to tray size, in the byte order the protocol wants (ARGB).
+fn tray_icon(app: &tauri::App) -> Vec<ksni::Icon> {
+    let Some(icon) = app.default_window_icon() else {
+        return Vec::new();
+    };
+    let (w, h, rgba) = (icon.width() as usize, icon.height() as usize, icon.rgba());
+    const SIZE: usize = 48;
+    if w == 0 || h == 0 || rgba.len() < w * h * 4 {
+        return Vec::new();
+    }
+    let mut data = Vec::with_capacity(SIZE * SIZE * 4);
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let at = ((y * h / SIZE) * w + (x * w / SIZE)) * 4;
+            data.extend_from_slice(&[rgba[at + 3], rgba[at], rgba[at + 1], rgba[at + 2]]);
+        }
+    }
+    vec![ksni::Icon { width: SIZE as i32, height: SIZE as i32, data }]
+}
+
+/// Builds the tray icon. Fails harmlessly on desktops without a tray, in
+/// which case closing the window simply quits as before.
+fn build_tray(app: &tauri::App) -> Result<TrayHandles, String> {
+    use ksni::blocking::TrayMethods;
+    TraceTray {
+        app: app.handle().clone(),
+        stats: "Trace is starting…".into(),
+        profiles: tuning::cpu_power().available_power_profiles,
+        icon: tray_icon(app),
+    }
+    .spawn()
+    .map_err(|e| e.to_string())
 }
 
 fn update_tray(state: &AppState, snap: &Snapshot) {
     let guard = state.tray.lock().unwrap();
-    let Some(handles) = guard.as_ref() else {
+    let Some(handle) = guard.as_ref() else {
         return;
     };
     let ram = snap.used_memory_bytes as f32 / snap.total_memory_bytes.max(1) as f32 * 100.0;
@@ -1851,11 +1939,7 @@ fn update_tray(state: &AppState, snap: &Snapshot) {
     if hottest > 0.0 {
         line.push_str(&format!("  ·  {hottest:.0}°C"));
     }
-    handles.stats.set_text(&line).ok();
-    handles
-        .tray
-        .set_title(Some(format!("{:.0}% {:.0}%", snap.cpu_usage_percent, ram)))
-        .ok();
+    handle.update(|tray: &mut TraceTray| tray.stats = line);
 }
 
 /// Runs an action, records it in the audit log, and hands the result back.
