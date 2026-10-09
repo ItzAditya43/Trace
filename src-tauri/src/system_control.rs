@@ -135,46 +135,42 @@ pub fn startup_impact() -> Vec<StartupEntry> {
     };
     out.lines()
         .filter_map(|line| {
-            let line = line.trim();
-            let (time_str, unit) = line.split_once(' ')?;
-            let unit = unit.trim().to_string();
-            let time_ms = parse_duration_ms(time_str)?;
-            Some(StartupEntry { unit, time_ms })
+            // "6min 50.113s some.service": the duration can be several
+            // tokens, so the unit is whatever follows the last one.
+            let tokens: Vec<&str> = line.split_whitespace().collect();
+            let unit_at = tokens.iter().position(|t| !is_duration_token(t))?;
+            if unit_at == 0 {
+                return None;
+            }
+            Some(StartupEntry {
+                unit: tokens[unit_at..].join(" "),
+                time_ms: crate::health::parse_duration_ms(&tokens[..unit_at].join(" ")),
+            })
         })
         .take(30)
         .collect()
 }
 
-fn parse_duration_ms(s: &str) -> Option<u64> {
-    // systemd-analyze durations look like "1.234s", "234ms", "1min 2.345s"
-    let mut total_ms = 0u64;
-    let mut num = String::new();
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c.is_ascii_digit() || c == '.' {
-            num.push(c);
-        } else {
-            let mut unit = String::new();
-            unit.push(c);
-            while let Some(&next) = chars.peek() {
-                if next.is_ascii_alphabetic() {
-                    unit.push(next);
-                    chars.next();
-                } else {
-                    break;
-                }
-            }
-            let value: f64 = num.parse().ok()?;
-            num.clear();
-            total_ms += match unit.as_str() {
-                "min" => (value * 60_000.0) as u64,
-                "s" => (value * 1_000.0) as u64,
-                "ms" => value as u64,
-                _ => 0,
-            };
-        }
+fn is_duration_token(token: &str) -> bool {
+    let digits = token.trim_end_matches(|c: char| c.is_ascii_alphabetic());
+    let suffix = &token[digits.len()..];
+    !digits.is_empty()
+        && digits.chars().all(|c| c.is_ascii_digit() || c == '.')
+        && matches!(suffix, "h" | "min" | "s" | "ms")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recognises_multi_token_durations() {
+        assert!(is_duration_token("6min"));
+        assert!(is_duration_token("50.113s"));
+        assert!(is_duration_token("234ms"));
+        assert!(!is_duration_token("archlinux-keyring-wkd-sync.service"));
+        assert!(!is_duration_token("3s.service"));
     }
-    Some(total_ms)
 }
 
 // ---- autostart ----

@@ -103,7 +103,9 @@ function LogPanel({
   command,
   empty,
   hint,
+  wide,
 }: {
+  wide?: boolean;
   title: string;
   command: string;
   empty: string;
@@ -113,7 +115,7 @@ function LogPanel({
   const [showAll, setShowAll] = useState(false);
   const lines = showAll ? data ?? [] : (data ?? []).slice(0, 8);
   return (
-    <section className="panel wide">
+    <section className={wide ? "panel wide" : "panel"}>
       <h2>{title}</h2>
       {loading && !data && <p className="loading">Reading the system journal…</p>}
       {data && data.length === 0 && <p className="status-ok">✓ {empty}</p>}
@@ -263,11 +265,14 @@ export default function Health() {
           <p className="status-ok">✓ Every service started cleanly.</p>
         ) : (
           failed_units.map((u) => (
-            <div key={u.name + u.user} className="meta-row">
-              <span className="status-fail">✗ {u.name}</span>
-              <span>
-                {u.description} {u.user ? "(your session)" : "(system)"}
-              </span>
+            <div key={u.name + u.user} className="issue-row failed-unit">
+              <span className="issue-tag issue-critical">✗ Failed</span>
+              <div>
+                <div className="issue-title">{u.name}</div>
+                <div className="issue-detail">
+                  {u.description} · {u.user ? "your session" : "system"}
+                </div>
+              </div>
             </div>
           ))
         )}
@@ -359,6 +364,7 @@ export default function Health() {
         hint="When RAM and swap run out the kernel kills a process to survive. Each one listed here was an app that vanished without warning."
       />
       <LogPanel
+        wide
         title="Recent Errors (this boot)"
         command="get_recent_errors"
         empty="No errors logged since boot."

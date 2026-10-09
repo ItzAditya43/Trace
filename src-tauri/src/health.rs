@@ -296,12 +296,13 @@ pub struct BootTime {
 }
 
 /// "1min 2.345s" / "3.790s" / "234ms" -> milliseconds.
-fn parse_duration_ms(s: &str) -> u64 {
+pub fn parse_duration_ms(s: &str) -> u64 {
     s.split_whitespace()
         .map(|token| {
             let split = token.find(|c: char| c.is_ascii_alphabetic()).unwrap_or(token.len());
             let value: f64 = token[..split].parse().unwrap_or(0.0);
             match &token[split..] {
+                "h" => value * 3_600_000.0,
                 "min" => value * 60_000.0,
                 "s" => value * 1_000.0,
                 "ms" => value,

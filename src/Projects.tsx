@@ -43,6 +43,11 @@ const SORTS: { key: string; label: string; compare: (a: ProjectInfo, b: ProjectI
 
 const ROOT_KEY = "trace.projects.root";
 
+// The last scan, kept for the life of the window: a scan sizes every project
+// on disk and takes seconds, so coming back to this page reuses it instead of
+// rescanning. The Scan button refreshes it.
+let lastScan: { root: string; projects: ProjectInfo[] } | null = null;
+
 function needsAttention(p: ProjectInfo): boolean {
   return p.dirty_files > 0 || (p.unpushed_commits ?? 0) > 0;
 }
@@ -129,7 +134,9 @@ export default function Projects() {
       return "~/Desktop/CODE";
     }
   });
-  const [projects, setProjects] = useState<ProjectInfo[] | null>(null);
+  const [projects, setProjects] = useState<ProjectInfo[] | null>(
+    () => lastScan?.projects ?? null
+  );
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState<Filter>("all");
   const [sortKey, setSortKey] = useState("recent");
@@ -141,7 +148,9 @@ export default function Projects() {
       const expanded = root.startsWith("~")
         ? root.replace("~", (await homeDir()).replace(/\/$/, ""))
         : root;
-      setProjects(await invoke<ProjectInfo[]>("scan_projects", { root: expanded }));
+      const found = await invoke<ProjectInfo[]>("scan_projects", { root: expanded });
+      lastScan = { root, projects: found };
+      setProjects(found);
       try {
         localStorage.setItem(ROOT_KEY, root);
       } catch {
@@ -154,9 +163,9 @@ export default function Projects() {
     }
   }
 
-  // Scan the remembered folder once when the page opens.
+  // Scan the remembered folder the first time the page opens.
   useEffect(() => {
-    scan();
+    if (!lastScan) scan();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -195,7 +204,7 @@ export default function Projects() {
             placeholder="Folder that holds your projects, e.g. ~/Desktop/CODE"
           />
           <button className="port-btn" onClick={scan} disabled={loading}>
-            {loading ? "Scanning…" : "Scan"}
+            {loading ? "Scanning…" : projects ? "Rescan" : "Scan"}
           </button>
         </div>
         {loading && !projects && (

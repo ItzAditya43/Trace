@@ -4,6 +4,7 @@ import { Segmented, StatusLine, useAction, usePoll } from "./ui";
 interface FirewallStatus {
   available: boolean;
   running: boolean;
+  responded: boolean;
   zone: string;
   services: string[];
   ports: string[];
@@ -81,6 +82,18 @@ export function FirewallControl() {
           ! The firewall is installed but not running — every port is
           reachable. Start it from Services (firewalld).
         </p>
+      ) : !data.responded ? (
+        <>
+          <p className="diagnose-hint">
+            The firewall is running, but it didn't answer when asked for its
+            rules (it can take a long time when the machine is busy).
+          </p>
+          <div className="control-actions">
+            <button className="ctl-btn" onClick={reload}>
+              Ask again
+            </button>
+          </div>
+        </>
       ) : (
         <>
           <p className="status-ok">

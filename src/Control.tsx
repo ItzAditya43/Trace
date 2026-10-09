@@ -313,7 +313,9 @@ function ServiceControl() {
       <div className="unit-list">
         {units.map((u) => (
           <div key={u.name} className="unit-row">
-            <span className="unit-name">{u.name}</span>
+            <span className="unit-name" title={`${u.name} — ${u.description}`}>
+              {u.name}
+            </span>
             <span
               className={
                 "unit-state " +
@@ -382,8 +384,12 @@ function DockerControl() {
         <div className="unit-list">
           {containers.map((c) => (
             <div key={c.id} className="unit-row">
-              <span className="unit-name">{c.name || c.id}</span>
-              <span className="unit-state">{c.status}</span>
+              <span className="unit-name" title={`${c.name || c.id} — ${c.image}`}>
+                {c.name || c.id}
+              </span>
+              <span className="unit-state" title={c.status}>
+                {c.status}
+              </span>
               <div className="unit-buttons">
                 <button className="ctl-btn-sm" onClick={() => act("start_container", c.id)}>
                   Start
@@ -558,24 +564,34 @@ function StartupImpact() {
   if (entries.length === 0) return null;
 
   const maxMs = Math.max(...entries.map((e) => e.time_ms), 1);
+  const seconds = (ms: number) =>
+    ms >= 60000
+      ? `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`
+      : `${(ms / 1000).toFixed(1)}s`;
 
   return (
     <section className="panel">
       <h2>Startup Impact</h2>
-      {entries.slice(0, 15).map((e) => (
-        <div key={e.unit} className="bar-row">
-          <span className="bar-label" title={e.unit}>
-            {e.unit.length > 22 ? e.unit.slice(0, 22) + "…" : e.unit}
-          </span>
-          <div className="bar-track">
-            <div
-              className="bar-fill bar-ok"
-              style={{ width: `${(e.time_ms / maxMs) * 100}%` }}
-            />
+      <div className="unit-list">
+        {entries.map((e) => (
+          <div key={e.unit} className="startup-row">
+            <span className="unit-name" title={e.unit}>
+              {e.unit}
+            </span>
+            <div className="bar-track">
+              <div
+                className="bar-fill bar-ok"
+                style={{ width: `${(e.time_ms / maxMs) * 100}%` }}
+              />
+            </div>
+            <span className="bar-value">{seconds(e.time_ms)}</span>
           </div>
-          <span className="bar-value">{e.time_ms}ms</span>
-        </div>
-      ))}
+        ))}
+      </div>
+      <p className="diagnose-hint">
+        How long each unit took to start at the last boot, slowest first.
+        Units start in parallel, so these don't add up to the boot time.
+      </p>
     </section>
   );
 }
@@ -869,12 +885,14 @@ function WindowControl() {
         {windows.map((w) => (
           <div key={w.address} className="unit-row">
             <span className="unit-name" title={w.title}>
-              {w.class} — ws {w.workspace.name}
+              {w.class} <span className="mem-muted">{w.title}</span>
             </span>
+            <span className="unit-state">ws {w.workspace.name}</span>
             <div className="unit-buttons">
               <input
                 className="port-input small"
-                style={{ width: 40 }}
+                style={{ width: 44 }}
+                aria-label="Target workspace"
                 value={targetWs}
                 onChange={(e) => setTargetWs(e.target.value)}
               />
@@ -1117,7 +1135,7 @@ export default function Control() {
   const [profilesVersion, setProfilesVersion] = useState(0);
 
   return (
-    <div className="page-flow">
+    <div className="page-flow control-flow">
       <div className="range-picker section-picker">
         {SECTIONS.map((s) => (
           <button

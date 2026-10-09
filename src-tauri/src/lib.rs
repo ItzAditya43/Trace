@@ -399,18 +399,18 @@ fn take_snapshot(state: &AppState) -> Snapshot {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_snapshot(state: tauri::State<AppState>) -> Snapshot {
     take_snapshot(&state)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_resource_history(state: tauri::State<AppState>, since_secs_ago: i64) -> Vec<db::ResourcePoint> {
     let since_ts = chrono_now() - since_secs_ago;
     state.db.resource_history(since_ts)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_disk_history(state: tauri::State<AppState>, since_secs_ago: i64) -> Vec<db::DiskPoint> {
     let since_ts = chrono_now() - since_secs_ago;
     state.db.disk_history(since_ts)
@@ -578,7 +578,7 @@ struct Diagnosis {
     events: Vec<db::EventRow>,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn diagnose_slowness(state: tauri::State<AppState>) -> Diagnosis {
     let since = chrono_now() - 3600;
     let events = state.db.events_since(since);
@@ -690,7 +690,7 @@ fn find_inodes_for_port(port: u16) -> Vec<String> {
     inodes
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn scan_projects(root: String) -> Vec<projects::ProjectInfo> {
     projects::scan(&root)
 }
@@ -738,56 +738,56 @@ async fn execute_action(action: &profiles::Action) -> Result<String, String> {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn freeze_process(state: tauri::State<AppState>, pid: u32) -> control_process::ActionResult {
     let r = control_process::freeze(pid);
     log_action(&state, "freeze_process", r.ok, &r.message);
     r
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn resume_process(state: tauri::State<AppState>, pid: u32) -> control_process::ActionResult {
     let r = control_process::resume(pid);
     log_action(&state, "resume_process", r.ok, &r.message);
     r
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn kill_process(state: tauri::State<AppState>, pid: u32, force: bool) -> control_process::ActionResult {
     let r = control_process::kill(pid, force);
     log_action(&state, "kill_process", r.ok, &r.message);
     r
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_process_priority(state: tauri::State<AppState>, pid: u32, nice: i32) -> control_process::ActionResult {
     let r = control_process::set_priority(pid, nice);
     log_action(&state, "set_process_priority", r.ok, &r.message);
     r
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_process_affinity(state: tauri::State<AppState>, pid: u32, cores: Vec<usize>) -> control_process::ActionResult {
     let r = control_process::set_affinity(pid, cores);
     log_action(&state, "set_process_affinity", r.ok, &r.message);
     r
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_process_cpu_limit(state: tauri::State<AppState>, pid: u32, percent: u32) -> control_process::ActionResult {
     let r = control_process::set_cpu_limit(pid, percent);
     log_action(&state, "set_process_cpu_limit", r.ok, &r.message);
     r
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_process_memory_limit(state: tauri::State<AppState>, pid: u32, mb: u64) -> control_process::ActionResult {
     let r = control_process::set_memory_limit(pid, mb);
     log_action(&state, "set_process_memory_limit", r.ok, &r.message);
     r
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_process_oom_score(state: tauri::State<AppState>, pid: u32, score: i32) -> control_process::ActionResult {
     let r = control_process::set_oom_score_adj(pid, score);
     log_action(&state, "set_process_oom_score", r.ok, &r.message);
@@ -846,26 +846,26 @@ async fn restart_container(state: tauri::State<'_, AppState>, id: String) -> Res
     r
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_gpu_persistence(state: tauri::State<AppState>, enabled: bool) -> Result<String, String> {
     let r = gpu_control::set_persistence_mode(enabled);
     log_action(&state, "set_gpu_persistence", r.is_ok(), r.as_deref().unwrap_or_else(|e| e));
     r
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_gpu_power_limit(state: tauri::State<AppState>, watts: u32) -> Result<String, String> {
     let r = gpu_control::set_power_limit(watts);
     log_action(&state, "set_gpu_power_limit", r.is_ok(), r.as_deref().unwrap_or_else(|e| e));
     r
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_profiles() -> Vec<profiles::Profile> {
     profiles::list_profiles()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn save_profile(profile: profiles::Profile) -> Result<(), String> {
     profiles::save_profile(&profile)
 }
@@ -941,12 +941,12 @@ async fn check_for_update() -> Result<Option<update_check::UpdateInfo>, String> 
     update_check::check_for_update("ItzAditya43/Trace").await
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_action_log(state: tauri::State<AppState>, since_secs_ago: i64) -> Vec<db::ActionRow> {
     state.db.actions_since(chrono_now() - since_secs_ago)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn who_is_using_port(state: tauri::State<AppState>, port: u16) -> Vec<PortOwner> {
     let inodes = find_inodes_for_port(port);
     if inodes.is_empty() {
@@ -993,7 +993,7 @@ fn who_is_using_port(state: tauri::State<AppState>, port: u16) -> Vec<PortOwner>
     owners
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn kill_process_on_port(
     state: tauri::State<AppState>,
     port: u16,
@@ -1021,158 +1021,158 @@ fn kill_process_on_port(
     r
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_ionice(state: tauri::State<AppState>, pid: u32, class: u32, level: u32) -> control_process::ActionResult {
     let r = system_control::set_ionice(pid, class, level);
     log_action(&state, "set_ionice", r.ok, &r.message);
     control_process::ActionResult { ok: r.ok, message: r.message }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_brightness() -> Option<system_control::BrightnessInfo> {
     system_control::get_brightness()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_brightness(state: tauri::State<AppState>, percent: u32) -> control_process::ActionResult {
     let r = system_control::set_brightness(percent);
     log_action(&state, "set_brightness", r.ok, &r.message);
     control_process::ActionResult { ok: r.ok, message: r.message }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_volume() -> Option<system_control::VolumeInfo> {
     system_control::get_volume()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_volume(state: tauri::State<AppState>, percent: u32) -> control_process::ActionResult {
     let r = system_control::set_volume(percent);
     log_action(&state, "set_volume", r.ok, &r.message);
     control_process::ActionResult { ok: r.ok, message: r.message }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn toggle_mute(state: tauri::State<AppState>) -> control_process::ActionResult {
     let r = system_control::toggle_mute();
     log_action(&state, "toggle_mute", r.ok, &r.message);
     control_process::ActionResult { ok: r.ok, message: r.message }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn startup_impact() -> Vec<system_control::StartupEntry> {
     system_control::startup_impact()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_autostart() -> Vec<system_control::AutostartEntry> {
     system_control::list_autostart()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_autostart_enabled(state: tauri::State<AppState>, filename: String, enabled: bool) -> control_process::ActionResult {
     let r = system_control::set_autostart_enabled(&filename, enabled);
     log_action(&state, "set_autostart_enabled", r.ok, &r.message);
     control_process::ActionResult { ok: r.ok, message: r.message }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_clipboard_history(state: tauri::State<AppState>) -> Vec<String> {
     state.clipboard_history.lock().unwrap().iter().cloned().collect()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_connections(state: tauri::State<AppState>, pid: Option<u32>) -> Vec<network_control::ConnectionInfo> {
     let sys = state.sys.lock().unwrap();
     network_control::list_connections(&sys, pid)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_network_interfaces() -> Vec<String> {
     network_control::list_interfaces()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn limit_interface_bandwidth(state: tauri::State<AppState>, iface: String, rate_kbit: u32) -> control_process::ActionResult {
     let r = network_control::limit_interface(&iface, rate_kbit);
     log_action(&state, "limit_interface_bandwidth", r.ok, &r.message);
     control_process::ActionResult { ok: r.ok, message: r.message }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn clear_interface_bandwidth_limit(state: tauri::State<AppState>, iface: String) -> control_process::ActionResult {
     let r = network_control::clear_interface_limit(&iface);
     log_action(&state, "clear_interface_bandwidth_limit", r.ok, &r.message);
     control_process::ActionResult { ok: r.ok, message: r.message }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn block_process_network(state: tauri::State<AppState>, pid: u32) -> control_process::ActionResult {
     let r = network_control::block_process_network(pid);
     log_action(&state, "block_process_network", r.ok, &r.message);
     control_process::ActionResult { ok: r.ok, message: r.message }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn unblock_all_network(state: tauri::State<AppState>) -> control_process::ActionResult {
     let r = network_control::unblock_all_network();
     log_action(&state, "unblock_all_network", r.ok, &r.message);
     control_process::ActionResult { ok: r.ok, message: r.message }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_usb_devices() -> Vec<usb_control::UsbDevice> {
     usb_control::list_devices()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_usb_authorized(state: tauri::State<AppState>, device_id: String, authorized: bool) -> control_process::ActionResult {
     let r = usb_control::set_authorized(&device_id, authorized);
     log_action(&state, "set_usb_authorized", r.ok, &r.message);
     control_process::ActionResult { ok: r.ok, message: r.message }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_windows() -> Result<Vec<window_control::WindowInfo>, String> {
     window_control::list_windows()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn move_window_to_workspace(state: tauri::State<AppState>, address: String, workspace: i32) -> control_process::ActionResult {
     let r = window_control::move_window_to_workspace(&address, workspace);
     log_action(&state, "move_window_to_workspace", r.ok, &r.message);
     control_process::ActionResult { ok: r.ok, message: r.message }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn focus_workspace(state: tauri::State<AppState>, workspace: i32) -> control_process::ActionResult {
     let r = window_control::focus_workspace(workspace);
     log_action(&state, "focus_workspace", r.ok, &r.message);
     control_process::ActionResult { ok: r.ok, message: r.message }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn close_window(state: tauri::State<AppState>, address: String) -> control_process::ActionResult {
     let r = window_control::close_window(&address);
     log_action(&state, "close_window", r.ok, &r.message);
     control_process::ActionResult { ok: r.ok, message: r.message }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_gpu_clock_lock(state: tauri::State<AppState>, min_mhz: u32, max_mhz: u32) -> Result<String, String> {
     let r = gpu_control::set_gpu_clock_lock(min_mhz, max_mhz);
     log_action(&state, "set_gpu_clock_lock", r.is_ok(), r.as_deref().unwrap_or_else(|e| e));
     r
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn reset_gpu_clock_lock(state: tauri::State<AppState>) -> Result<String, String> {
     let r = gpu_control::reset_gpu_clock_lock();
     log_action(&state, "reset_gpu_clock_lock", r.is_ok(), r.as_deref().unwrap_or_else(|e| e));
     r
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_namespaces(state: tauri::State<AppState>) -> Vec<namespace_control::NamespaceGroup> {
     let sys = state.sys.lock().unwrap();
     namespace_control::list_namespaces(&sys)
@@ -1267,8 +1267,9 @@ fn logged(state: &AppState, name: &str, r: control_process::ActionResult) -> con
     r
 }
 
-// New commands below are `command(async)` so that anything which shells out
-// or waits on a password prompt runs off the UI thread.
+// Every command is `command(async)` (or an `async fn`): plain commands run on
+// the UI thread, where anything that shells out, walks /proc or waits on a
+// password prompt would freeze the window.
 
 #[tauri::command(async)]
 fn get_app_memory_history(state: tauri::State<AppState>, since_secs_ago: i64) -> Vec<db::AppMemoryPoint> {
@@ -1849,6 +1850,20 @@ mod tests {
         dump("get_audio_devices", json(&desktop::audio_devices()));
         dump("get_cleanup_status", json(&desktop::cleanup_status()));
         dump("search_processes", json(&snap.top_processes));
+        dump("startup_impact", json(&system_control::startup_impact()));
+        dump("list_autostart", json(&system_control::list_autostart()));
+        dump("list_usb_devices", json(&usb_control::list_devices()));
+        dump("list_windows", json(&window_control::list_windows().unwrap_or_default()));
+        dump("list_namespaces", json(&namespace_control::list_namespaces(&state.sys.lock().unwrap())));
+        dump(
+            "list_connections",
+            json(&network_control::list_connections(&state.sys.lock().unwrap(), None)),
+        );
+        dump("list_network_interfaces", json(&network_control::list_interfaces()));
+        let services = tauri::async_runtime::block_on(systemd_control::list_units(true));
+        dump("list_services", json(&services.unwrap_or_default()));
+        let containers = tauri::async_runtime::block_on(docker_control::list_containers());
+        dump("list_containers", json(&containers.unwrap_or_default()));
     }
 
     mod erased {

@@ -1,6 +1,7 @@
 name: Release
 
-# Builds Trace and publishes it as a GitHub Release on every push to main.
+# Builds Trace and publishes it as a GitHub Release when a push to main
+# carries a version (package.json) that has no release yet.
 # This is what the in-app update banner checks against — it never installs
 # anything automatically, it just tells you a new version exists.
 on:
@@ -17,33 +18,47 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Compute version
+      # The version is whatever is committed in package.json (kept in step
+      # with Cargo.toml and tauri.conf.json). A push that doesn't bump it
+      # builds nothing new: the release for that version already exists.
+      - name: Read version
         id: version
-        run: echo "version=0.1.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
-
-      - name: Set version in package.json, Cargo.toml, tauri.conf.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          npm pkg set version="$VERSION"
-          sed -i "0,/^version = /s/^version = \".*\"/version = \"$VERSION\"/" src-tauri/Cargo.toml
-          jq --arg v "$VERSION" '.version = $v' src-tauri/tauri.conf.json > /tmp/tauri.conf.json
-          mv /tmp/tauri.conf.json src-tauri/tauri.conf.json
+          VERSION="$(jq -r .version package.json)"
+          for f in src-tauri/tauri.conf.json; do
+            [ "$(jq -r .version "$f")" = "$VERSION" ] || { echo "::error::$f version does not match package.json ($VERSION)"; exit 1; }
+          done
+          grep -q "^version = \"$VERSION\"" src-tauri/Cargo.toml || { echo "::error::Cargo.toml version does not match package.json ($VERSION)"; exit 1; }
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::notice::Release v$VERSION already exists — bump the version to publish a new one."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Install system dependencies
+        if: steps.version.outputs.publish == 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgtk-3-dev
 
       - uses: actions/setup-node@v4
+        if: steps.version.outputs.publish == 'true'
         with:
           node-version: 20
 
       - uses: dtolnay/rust-toolchain@stable
+        if: steps.version.outputs.publish == 'true'
 
       - name: Install frontend dependencies
+        if: steps.version.outputs.publish == 'true'
         run: npm ci
 
       - uses: tauri-apps/tauri-action@v0
+        if: steps.version.outputs.publish == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:

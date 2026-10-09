@@ -16,17 +16,31 @@ fn action(result: Result<String, String>, success: impl Into<String>) -> ActionR
 pub struct FirewallStatus {
     pub available: bool,
     pub running: bool,
+    /// False when the service is up but didn't answer the query in time.
+    pub responded: bool,
     pub zone: String,
     pub services: Vec<String>,
     pub ports: Vec<String>,
+}
+
+/// `firewall-cmd`, bounded: it talks to the daemon over D-Bus and has been
+/// seen to hang for well over 20 seconds.
+fn firewall_cmd(args: &[&str]) -> Command {
+    let mut cmd = Command::new("timeout");
+    cmd.args(["15", "firewall-cmd"]).args(args);
+    cmd
 }
 
 /// One `--list-all` call covers everything: `firewall-cmd` is a Python
 /// client that takes seconds to start, so separate queries would add up.
 pub fn firewall_status() -> FirewallStatus {
     let available = has_tool("firewall-cmd");
-    let out = if available {
-        run(Command::new("firewall-cmd").arg("--list-all")).ok()
+    // Whether it is running comes from systemd, not from the query below:
+    // a slow or stuck answer must not be reported as "firewall is off".
+    let running = available
+        && run_lossy(Command::new("systemctl").args(["is-active", "firewalld"])) == "active";
+    let out = if running {
+        run(&mut firewall_cmd(&["--list-all"])).ok()
     } else {
         None
     };
@@ -39,7 +53,8 @@ pub fn firewall_status() -> FirewallStatus {
     };
     FirewallStatus {
         available,
-        running: out.is_some(),
+        running,
+        responded: out.is_some(),
         // First line: "public (default, active)".
         zone: text
             .lines()
@@ -61,9 +76,16 @@ pub fn set_firewall_port(port: u16, protocol: &str, open: bool, permanent: bool)
     }
     let flag = format!("--{}-port={port}/{protocol}", if open { "add" } else { "remove" });
     let verb = if open { "Opened" } else { "Closed" };
-    let mut result = run(Command::new("firewall-cmd").arg(&flag));
+    let timed_out = |e: String| {
+        if e.starts_with("exited with") {
+            "The firewall didn't answer in time — try again".to_string()
+        } else {
+            e
+        }
+    };
+    let mut result = run(&mut firewall_cmd(&[&flag])).map_err(timed_out);
     if permanent && result.is_ok() {
-        result = run(Command::new("firewall-cmd").args(["--permanent", &flag]));
+        result = run(&mut firewall_cmd(&["--permanent", &flag])).map_err(timed_out);
     }
     action(
         result,

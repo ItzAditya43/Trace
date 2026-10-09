@@ -32,7 +32,7 @@ Actions that need root (governor, swap, fans, SMART, packages) go through polkit
 
 ## Updates
 
-Every push to `main` builds and publishes a new [GitHub Release](../../releases) automatically. The app checks that feed on launch and shows a dismissible banner if a newer version exists — it never downloads or installs anything on its own.
+The version lives in `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json` (keep the three in step). A push to `main` whose version has no [GitHub Release](../../releases) yet builds and publishes one; pushing without bumping the version publishes nothing new. The app checks that feed on launch and shows a dismissible banner if a newer version exists — it never downloads or installs anything on its own.
 
 ## Development
 

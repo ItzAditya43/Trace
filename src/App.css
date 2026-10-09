@@ -1767,3 +1767,48 @@ body {
   grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr));
   gap: 16px;
 }
+
+/* ---- Control: panels hold rows of name + state + buttons, so they need
+   more width than a chart card before sitting side by side ---- */
+
+.control-flow > .panel {
+  flex-basis: 460px;
+}
+
+.unit-row {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+/* Rows without a state column (name + buttons only). */
+.unit-row > .unit-buttons:nth-child(2) {
+  grid-column: 2 / -1;
+}
+
+.unit-state {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.unit-buttons {
+  flex-shrink: 0;
+  align-items: center;
+}
+
+.unit-list {
+  overflow-x: hidden;
+}
+
+.startup-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(60px, 1fr) 64px;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  padding: 3px 4px;
+}
+
+.failed-unit {
+  margin-bottom: 10px;
+}
