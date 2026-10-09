@@ -29,4 +29,3 @@ src-tauri/target
 # Trace runtime data (local machine history db, not source)
 *.sqlite3
 
-.claude
