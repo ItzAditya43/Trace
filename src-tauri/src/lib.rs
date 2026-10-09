@@ -13,6 +13,7 @@ mod health;
 mod hypr;
 mod logbook;
 mod memory_map;
+mod more;
 mod profiles;
 mod search;
 mod projects;
@@ -130,6 +131,7 @@ struct AppState {
     pending: Mutex<extras::Pending>,
     sleepers: Mutex<extras::SleeperState>,
     thermal: Mutex<extras::ThermalState>,
+    sleep_watch: Mutex<more::SleepWatch>,
     net_totals: Mutex<std::collections::HashMap<String, (u64, u64)>>,
 }
 
@@ -373,7 +375,11 @@ fn take_snapshot(state: &AppState) -> Snapshot {
     let mut sys = state.sys.lock().unwrap();
     sys.refresh_cpu_all();
     sys.refresh_memory();
-    sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+    sys.refresh_processes_specifics(
+        sysinfo::ProcessesToUpdate::All,
+        true,
+        sysinfo::ProcessRefreshKind::new().with_cpu().with_memory(),
+    );
 
     let disks = Disks::new_with_refreshed_list();
     let disk_infos = disks
@@ -1611,6 +1617,36 @@ fn set_external_brightness(number: u32, percent: u32) -> control_process::Action
 }
 
 #[tauri::command(async)]
+fn run_connection_doctor() -> more::Diagnosis {
+    more::connection_doctor()
+}
+
+#[tauri::command(async)]
+fn list_listeners() -> Vec<more::Listener> {
+    more::listeners()
+}
+
+#[tauri::command(async)]
+fn get_project_junk(project: String) -> Vec<more::JunkDir> {
+    more::project_junk(&project)
+}
+
+#[tauri::command(async)]
+fn clean_project_junk(state: tauri::State<AppState>, project: String, paths: Vec<String>) -> control_process::ActionResult {
+    logged(&state, "clean_project_junk", more::clean_junk(&project, &paths))
+}
+
+#[tauri::command(async)]
+fn get_battery_care(state: tauri::State<AppState>) -> more::BatteryCare {
+    more::battery_care(&state.db)
+}
+
+#[tauri::command(async)]
+fn get_data_usage(state: tauri::State<AppState>) -> Vec<more::DataUsage> {
+    more::data_usage(&state.db, &automation::load().data_budgets)
+}
+
+#[tauri::command(async)]
 fn get_ports() -> hardware::Ports {
     hardware::ports()
 }
@@ -2248,6 +2284,17 @@ fn background_tick(state: &AppState, snap: &Snapshot, tick: u64) {
         logbook::ingest_power_events(&state.db, tick == 0);
         logbook::ingest_packages(&state.db);
         extras::ingest_trouble(&state.db);
+        more::check_budgets(&state.db, &config.data_budgets);
+    }
+    if let Some(battery) = &snap.battery {
+        more::watch_sleep(
+            &state.db,
+            &mut state.sleep_watch.lock().unwrap(),
+            now,
+            battery.percent as f32,
+            battery.status == "Discharging",
+            TICK_SECS as i64,
+        );
     }
     if let Some(note) = hardware::tick(&mut state.display_state.lock().unwrap()) {
         log_action(state, "display_layout", true, &note);
@@ -2358,7 +2405,9 @@ pub fn run() {
             }
         })
         .manage(AppState {
-            sys: Mutex::new(System::new_all()),
+            // Starts empty: each snapshot fills in only CPU and memory per
+            // process, not command lines, environments and open files.
+            sys: Mutex::new(System::new()),
             last_net: Mutex::new(std::collections::HashMap::new()),
             db: db::Db::open(),
             last_snapshot: Mutex::new(None),
@@ -2373,6 +2422,7 @@ pub fn run() {
             pending: Mutex::new(extras::Pending::default()),
             sleepers: Mutex::new(extras::SleeperState::default()),
             thermal: Mutex::new(extras::ThermalState::default()),
+            sleep_watch: Mutex::new(more::SleepWatch::default()),
             net_totals: Mutex::new(std::collections::HashMap::new()),
         })
         .setup(move |app| {
@@ -2411,6 +2461,7 @@ pub fn run() {
                     let state = handle.state::<AppState>();
                     logbook::init(&state.db);
                     tweaks::init(&state.db);
+                    more::init(&state.db);
                     tweaks::reapply_session(&state.db);
                     state.db.prune_app_memory(chrono_now() - 14 * 86_400);
                     logbook::prune_raw(&state.db, chrono_now() - 90 * 86_400);
@@ -2494,6 +2545,12 @@ pub fn run() {
             list_namespaces,
             scan_folder_sizes,
             get_memory_breakdown,
+            run_connection_doctor,
+            list_listeners,
+            get_project_junk,
+            clean_project_junk,
+            get_battery_care,
+            get_data_usage,
             get_ports,
             get_helper_status,
             set_helper,
@@ -2629,6 +2686,7 @@ mod tests {
             pending: Mutex::new(extras::Pending::default()),
             sleepers: Mutex::new(extras::SleeperState::default()),
             thermal: Mutex::new(extras::ThermalState::default()),
+            sleep_watch: Mutex::new(more::SleepWatch::default()),
             net_totals: Mutex::new(std::collections::HashMap::new()),
         };
         let snap = take_snapshot(&state);
@@ -2720,6 +2778,9 @@ mod tests {
         );
         dump("list_timers", json(&extras::timers()));
         dump("get_ports", json(&hardware::ports()));
+        dump("run_connection_doctor", json(&more::connection_doctor()));
+        dump("list_listeners", json(&more::listeners()));
+        dump("get_project_junk", json(&more::project_junk(env!("CARGO_MANIFEST_DIR"))));
         dump("get_helper_status", json(&tweaks::helper_status()));
         let all = tweaks::list(&state.db);
         dump(

@@ -2372,3 +2372,28 @@ kbd {
   font-size: 13px;
   color: #e6e8ee;
 }
+
+.rescue-tight {
+  border-color: #d03b3b;
+}
+
+.rescue-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(330px, 100%), 1fr));
+  gap: 8px 20px;
+}
+
+.rescue-app {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+}
+
+code {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  background: #1c1f29;
+  border-radius: 4px;
+  padding: 1px 5px;
+}

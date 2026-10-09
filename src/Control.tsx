@@ -3,6 +3,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { NavContext } from "./nav";
 import AppSettings from "./AppSettings";
 import { ScheduledJobs, TimersControl } from "./Quick";
+import { ConnectionDoctor, DataBudgets, ListeningPorts } from "./More";
 import { invoke } from "@tauri-apps/api/core";
 import Automation from "./Automation";
 import Packages from "./Packages";
@@ -1276,6 +1277,7 @@ export default function Control() {
       {section === "apps" && (
         <>
           <ProcessControl />
+          <ListeningPorts />
           <WindowControl />
           <NamespaceControl />
         </>
@@ -1294,6 +1296,8 @@ export default function Control() {
       {section === "network" && (
         <>
           <VpnControl />
+          <ConnectionDoctor />
+          <DataBudgets />
           <WirelessControl />
           <FirewallControl />
           <NetworkControl />

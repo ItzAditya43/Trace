@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { homeDir } from "@tauri-apps/api/path";
 import { ActionResult, Tile, bytesToHuman } from "./ui";
+import { ProjectJunk } from "./More";
 
 interface ProjectInfo {
   name: string;
@@ -121,6 +122,7 @@ function ProjectCard({ p }: { p: ProjectInfo }) {
           Files
         </button>
       </div>
+      <ProjectJunk project={p.path} />
       {message && <p className="status-fail">✗ {message.message}</p>}
     </section>
   );

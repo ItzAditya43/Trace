@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Sparkline, bytesToHuman, formatDay, usePoll } from "./ui";
+import { BatteryCareCard } from "./More";
 
 interface Issue {
   severity: "critical" | "warn" | "info";
@@ -315,6 +316,8 @@ export default function Health() {
           )}
         </section>
       ))}
+
+      <BatteryCareCard />
 
       <section className="panel">
         <h2>Boot Time</h2>

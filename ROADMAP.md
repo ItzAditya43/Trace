@@ -24,7 +24,7 @@ Two things apply to several ideas:
 1. ✅ **Built** (Overview → “Why is it like this right now?”) — **"Why is it hot / loud / slow right now?" button (S).** One click gives a plain answer from data Trace already has: which app, which power profile, whether it's charging, whether memory is stalling.
 2. **Battery drain per app (M).** Estimates how many watts each app costs and how much battery time closing it would buy back.
 3. ✅ **Built** (Hardware → Graphics Cards) — **What's keeping the dedicated GPU awake (M).** Shows which apps hold the NVIDIA GPU on and what that costs in battery.
-4. **Sleep report (M).** After each sleep: how long, how much battery it lost, what woke it, and what blocked it from sleeping.
+4. ✅ **Built** (Health → Battery Over Time → Recent sleeps) — **Sleep report (M).** After each sleep: how long, how much battery it lost, what woke it, and what blocked it from sleeping.
 5. **Honest screen time (S).** Detects when you're away from the keyboard, so a window left focused overnight stops counting. Adds an hour-by-hour strip of what you used each day.
 6. **Leak detector (S).** Flags apps whose memory climbs steadily over days and offers a scheduled restart. The history is already recorded.
 7. **"What grew on my disk?" (M).** Snapshots folder sizes weekly and shows the difference.
@@ -38,21 +38,21 @@ Two things apply to several ideas:
 12. ✅ **Built** (three “battery falls to…” schedules) — **Low-battery ladder (S).** At 30 / 20 / 10% it steps through battery saver, dimming, freezing chosen apps, then sleep.
 13. ✅ **Built** (Control → Automation → Sleep Apps You Aren't Using) — **Sleep apps you aren't using (M).** Auto-freezes chosen heavy apps after N minutes unfocused and wakes them when you click back. On a machine short of RAM this is likely the biggest single win.
 14. **Focus mode (S).** One switch for a set time: freeze chosen apps, block their network, mute alerts, then restore everything.
-15. **Panic key (M).** A global shortcut that opens a tiny, always-responsive list of memory hogs to freeze or kill when the desktop is crawling. It can also trigger itself when stalls spike.
+15. ✅ **Built** (Memory → Quick Rescue; `trace panic` lands there) — **Panic key (M).** A global shortcut that opens a tiny, always-responsive list of memory hogs to freeze or kill when the desktop is crawling. It can also trigger itself when stalls spike.
 16. ✅ **Built** (Control → Apps & Processes → “Tell me when it's done”) — **"Tell me when it's done" (S).** Pick any running process, or "when the CPU goes idle", and get a notification when a build, download or render finishes.
 17. **Weekly maintenance run (S).** Trim, package cache, journal, crash dumps, Docker leftovers and an update check, done while plugged in and idle, with a report.
 18. ✅ **Built** (`trace preset <id>`, `trace freeze|resume|quit|restart <app>`, `trace page <name>`, `trace panic`) — **Keyboard shortcuts and a command line (S).** `trace preset gaming` or `trace freeze brave`, so presets and actions can be bound to keys.
 
 ## For development work
 
-19. **Developer junk cleaner (M).** Per project: size of `node_modules`, `target/`, virtual environments, plus Docker images, volumes and build cache, with one-click clearing.
-20. **Dev server and port manager (M).** Every listening port with the project it belongs to, plus open in browser, stop, and conflict warnings.
+19. ✅ **Built** (Projects → Find build files) — **Developer junk cleaner (M).** Per project: size of `node_modules`, `target/`, virtual environments, plus Docker images, volumes and build cache, with one-click clearing.
+20. ✅ **Built** (Control → Apps & Processes → Listening Ports) — **Dev server and port manager (M).** Every listening port with the project it belongs to, plus open in browser, stop, and conflict warnings.
 21. **Project work mode (L).** Opening a project starts its containers, database and dev server; closing it stops them and frees the RAM.
 22. **Run restricted (M).** Launch any program with no network, a RAM or CPU cap, or a read-only home folder. Useful for untrusted tools.
 
 ## Hardware and devices
 
-23. **Battery care (M).** A capacity-over-months chart, and "charge to 100% by 8 am tomorrow" so a charge limit doesn't catch you before travel.
+23. ✅ **Built** (capacity history on Health; the timed full charge is not built) — **Battery care (M).** A capacity-over-months chart, and "charge to 100% by 8 am tomorrow" so a charge limit doesn't catch you before travel.
 24. ✅ **Built** (Hardware → Displays → Saved layouts) — **Display layouts (M).** Save docked, undocked and presentation layouts and apply them automatically when a monitor is connected.
 25. **Mic and camera watch (M).** Shows which app is using the microphone or camera now, with a history of who used them and when.
 26. **Update assistant (L).** Pending updates with warnings (kernel or GPU driver means a reboot; distribution news that needs manual steps), a snapshot first where possible, then what needs restarting afterwards. Also helps merge leftover `.pacnew` config files.
@@ -71,9 +71,9 @@ Two things apply to several ideas:
 
 ## Internet
 
-33. **Connection doctor and speed history (M).** Tests the router, the internet and DNS separately to say where a problem is, and keeps a chart of speed and delay per network over time.
+33. ✅ **Built** (Control → Network → Connection Doctor; speed history is not built) — **Connection doctor and speed history (M).** Tests the router, the internet and DNS separately to say where a problem is, and keeps a chart of speed and delay per network over time.
 34. **Wi-Fi manager (M).** Signal strength over time, how crowded each channel is, and saved networks with show-password, share by QR code, forget and priority.
-35. **Data budget and hotspot mode (S).** A monthly data allowance per network with a warning at 80%, and on a phone hotspot it pauses updates and other heavy background traffic. Builds on the data-used record that already exists.
+35. ✅ **Built** (Control → Network → Data Used This Month; hotspot mode is not built) — **Data budget and hotspot mode (S).** A monthly data allowance per network with a warning at 80%, and on a phone hotspot it pauses updates and other heavy background traffic. Builds on the data-used record that already exists.
 36. **Who is my computer talking to? (L).** Per app: which sites and countries it contacted, with new or unusual ones flagged.
 
 ## Files and backup

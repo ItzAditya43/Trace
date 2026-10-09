@@ -514,6 +514,39 @@ function Apps({ data, onChange }: { data: MemoryBreakdown; onChange: () => void 
   );
 }
 
+/** The few biggest apps with the two buttons that matter when the machine is crawling. */
+function Rescue({ data, onChange }: { data: MemoryBreakdown; onChange: () => void }) {
+  const { result, busy, run } = useAction(onChange);
+  const tight = data.available_bytes / data.total_bytes < 0.12 || (data.pressure_some_avg10 ?? 0) > 10;
+  return (
+    <section className={tight ? "panel wide rescue rescue-tight" : "panel wide rescue"}>
+      <h2>{tight ? "Memory Is Running Out — Free Some Now" : "Quick Rescue"}</h2>
+      <div className="rescue-grid">
+        {data.apps.slice(0, 6).map((a) => (
+          <div key={a.name} className="rescue-app">
+            <span className="tweak-title">{a.name}</span>
+            <span className="mem-muted">{bytesToHuman(a.ram_bytes + a.swap_bytes)}</span>
+            <span className="unit-buttons">
+              <button className="ctl-btn-sm" disabled={busy} onClick={() => run("app_action", { name: a.name, action: "freeze" })}>
+                Freeze
+              </button>
+              <button className="ctl-btn-sm" disabled={busy} onClick={() => run("app_action", { name: a.name, action: "resume" })}>
+                Resume
+              </button>
+              <ConfirmButton label="Quit" confirmLabel="Confirm" className="ctl-btn-sm ctl-danger" disabled={busy} onConfirm={() => run("app_action", { name: a.name, action: "kill" })} />
+            </span>
+          </div>
+        ))}
+      </div>
+      <StatusLine result={result} />
+      <p className="diagnose-hint">
+        The six largest apps. Freezing stops an app's CPU use at once and lets its memory be swapped
+        out; quitting frees it. Bind <code>trace panic</code> to a key to land here from anywhere.
+      </p>
+    </section>
+  );
+}
+
 export default function MemoryMap() {
   const { data, error, reload } = usePoll<MemoryBreakdown>(
     "get_memory_breakdown",
@@ -526,6 +559,7 @@ export default function MemoryMap() {
 
   return (
     <>
+      <Rescue data={data} onChange={reload} />
       <Distribution data={data} />
       <Apps data={data} onChange={reload} />
       <Growth />

@@ -100,6 +100,9 @@ pub struct Config {
     /// Settings changed while the machine is hot, and put back when it cools.
     #[serde(default)]
     pub thermal: Vec<crate::extras::ThermalRule>,
+    /// Monthly data allowances per network interface.
+    #[serde(default)]
+    pub data_budgets: Vec<crate::more::DataBudget>,
 }
 
 fn yes() -> bool {
@@ -116,6 +119,7 @@ impl Default for Config {
             pinned: Vec::new(),
             sleepers: Vec::new(),
             thermal: Vec::new(),
+            data_budgets: Vec::new(),
         }
     }
 }
@@ -303,6 +307,7 @@ mod tests {
             pinned: Vec::new(),
             sleepers: Vec::new(),
             thermal: Vec::new(),
+            data_budgets: Vec::new(),
             alerts_enabled: true,
             close_to_tray: true,
             rules: vec![Rule {
