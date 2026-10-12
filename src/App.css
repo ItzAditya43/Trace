@@ -2798,3 +2798,45 @@ html.overlay-root #root {
   padding: 6px 8px;
   user-select: all;
 }
+
+.overlay-anchor {
+  display: flex;
+  inset: 0;
+  position: fixed;
+}
+
+.overlay-anchor.overlay-top {
+  align-items: flex-start;
+}
+
+.overlay-anchor.overlay-bottom {
+  align-items: flex-end;
+}
+
+.overlay-anchor.overlay-left {
+  justify-content: flex-start;
+}
+
+.overlay-anchor.overlay-center {
+  justify-content: center;
+}
+
+.overlay-anchor.overlay-right {
+  justify-content: flex-end;
+}
+
+.overlay-anchor > .overlay {
+  flex: none;
+  max-height: 100%;
+  max-width: 100%;
+}
+
+.overlay-strip .overlay-cell {
+  flex: 1 1 auto;
+}
+
+.overlay-cell {
+  /* A solid dark outline drawn behind each glyph: readable on white with no tint at all. */
+  -webkit-text-stroke: calc(2.6px * var(--overlay-scale, 1)) rgba(0, 0, 0, 0.82);
+  paint-order: stroke fill;
+}

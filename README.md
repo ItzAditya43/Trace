@@ -22,6 +22,8 @@ Built with Tauri (Rust) and React. Everything it tells you comes from measuremen
 | **Tweaks** | About 260 system settings with plain explanations, presets, suggestions for this machine, undo, and a way to measure whether a change helped. |
 | **Control** | Processes, power, network and VPNs, devices and sound, services, automation, packages, cleanup and backups. |
 
+There is also a **stats overlay**: a see-through, click-through strip or panel of live numbers (including frame rate in games) that sits on top of whatever you are doing.
+
 Press **Ctrl+K** anywhere to search settings, pages, running programs, services and the logbook.
 
 ## Install
@@ -51,7 +53,7 @@ See [Getting started](docs/getting-started.md) for requirements, the launcher en
 
 ## How it behaves
 
-- **It keeps running in the tray** when the window is closed, so the logbook, rules, schedules and alerts keep working. Launching it again brings the existing window back. A hidden Trace costs about one percent of one processor core and about 270 MB of memory (about 135 MB of it private to Trace; the rest is system libraries shared with other apps).
+- **It keeps running in the tray** when the window is closed, so the logbook, rules, schedules and alerts keep working. Launching it again brings the existing window back. A Trace in the tray costs about one percent of one processor core. Its window is shut down completely while it is away, so only the background process stays in memory.
 - **Nothing runs as administrator by default.** Actions that need it go through the desktop's own password prompt, one prompt per batch. An optional trusted helper lets chosen settings change without a prompt; it accepts only values from the catalogue and logs everything it does.
 - **Every change is read back.** If the system ignored a setting, Trace says so instead of showing it as applied.
 - **It never updates itself.** It checks this repository's releases on launch and shows a banner when a newer version exists.

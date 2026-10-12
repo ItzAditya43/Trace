@@ -14,6 +14,7 @@ When Trace is already running, running `trace` again with a command hands that c
 | `trace quit <app>` | Asks it to quit. |
 | `trace restart <app>` | Restarts it. |
 | `trace mini` | Shows or hides the mini monitor. |
+| `trace overlay` | Shows or hides the see-through stats overlay. |
 | `trace panic` | Opens the mini monitor and never closes it. Bind this to a key. |
 
 ## Key bindings

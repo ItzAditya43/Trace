@@ -45,7 +45,7 @@ Recording starts immediately. Pages that show history (History, Logs, leak detec
 
 ## The tray
 
-Closing the window hides Trace instead of quitting it, so the logbook, rules, schedules and alerts keep working.
+Closing the window sends Trace to the tray instead of quitting it, so the logbook, rules, schedules and alerts keep working. The window itself is shut down completely while it is away, which gives its memory back; reopening it takes a moment.
 
 - **Left click** the tray icon to show or hide the window.
 - **Right click** for live CPU, memory and temperature, the mini monitor, the power profile, keep-awake and Quit.
@@ -61,6 +61,18 @@ Rules, schedules, alerts and the logbook only work while Trace is running, so th
 ## The mini monitor
 
 A small always-on-top window with CPU, memory, temperature, network and the six heaviest apps, each with Freeze and Quit. Open it from the tray menu, from **Trace Itself**, or with `trace mini`. `trace panic` opens it and never closes it, which makes it a good key binding for when the desktop is crawling.
+
+## The stats overlay
+
+A see-through panel of live numbers that sits on top of whatever you are doing, including a game. Clicks pass straight through it and it never takes the keyboard. Open it from the tray menu, with `trace overlay`, or from **Control → Display & Devices → Stats Overlay**, which is also where it is set up, since the overlay itself can't be clicked:
+
+- **Shape**: a slim strip, a small panel, or automatic (a strip while a game runs, a panel otherwise).
+- **Where**: any corner or the middle of the top or bottom edge, on a chosen monitor or whichever is in use. It keeps clear of bars and stays inside the screen; a strip too wide for a small screen becomes a panel.
+- **Tint and text size**, and which readings to show: frame rate, CPU, GPU, memory, temperature, fan, network, battery, clock.
+
+**Frame rate.** Only a game knows its own frame rate, so the game has to report it. The settings card gives a launch option to paste into the game's properties in Steam; it runs MangoHud inside the game, drawing nothing, and Trace shows the number. Without it the overlay shows everything except frame rate.
+
+Staying above other windows and letting clicks through are done by Hyprland. On other desktops the overlay opens as an ordinary small window.
 
 ## Where things are kept
 

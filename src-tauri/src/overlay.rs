@@ -95,6 +95,27 @@ pub struct Geometry {
     /// The same place counted from the monitor's own top-left corner.
     pub local_x: i32,
     pub local_y: i32,
+    /// The corner it is anchored to, e.g. "top-right".
+    pub corner: String,
+}
+
+impl Geometry {
+    /// Where the window itself must sit so that the numbers land at this
+    /// place. `window_width`/`window_height` are what the desktop actually
+    /// gave the window, which can be more than was asked for (the toolkit
+    /// has a smallest window size). The numbers are anchored to a corner
+    /// inside the window, so the window is lined up by that corner.
+    pub fn window_origin(&self, window_width: i32, window_height: i32) -> (i32, i32) {
+        let x = if self.corner.ends_with("left") {
+            self.x
+        } else if self.corner.ends_with("center") {
+            self.x + self.width / 2 - window_width / 2
+        } else {
+            self.x + self.width - window_width
+        };
+        let y = if self.corner.starts_with("top") { self.y } else { self.y + self.height - window_height };
+        (x, y)
+    }
 }
 
 const MARGIN: i32 = 12;
@@ -113,7 +134,10 @@ pub fn geometry(config: &Config, screens: &[Screen], game_running: bool, fps_ava
     let (ux, uy) = (screen.x + left, screen.y + top);
     let (uw, uh) = (screen.width - left - right, screen.height - top - bottom);
 
-    let shown = config.items.iter().filter(|i| i.as_str() != "fps" || fps_available).count().max(1) as f32;
+    let visible: Vec<&String> = config.items.iter().filter(|i| i.as_str() != "fps" || fps_available).collect();
+    let shown = visible.len().max(1) as f32;
+    // In a strip, the network and clock readings are wider than a percentage.
+    let strip_units: f32 = visible.iter().map(|i| match i.as_str() { "net" => 1.7, "clock" => 1.35, _ => 1.0 }).sum::<f32>().max(1.0);
     let scale = config.text_scale;
     let mut layout = match config.layout.as_str() {
         "strip" => "strip",
@@ -121,7 +145,7 @@ pub fn geometry(config: &Config, screens: &[Screen], game_running: bool, fps_ava
         _ if game_running => "strip",
         _ => "panel",
     };
-    let strip_width = (shown * STRIP_ITEM_WIDTH * scale + 10.0) as i32;
+    let strip_width = (strip_units * STRIP_ITEM_WIDTH * scale + 10.0) as i32;
     if layout == "strip" && strip_width > uw - 2 * MARGIN {
         layout = "panel";
     }
@@ -141,7 +165,7 @@ pub fn geometry(config: &Config, screens: &[Screen], game_running: bool, fps_ava
         ux + uw - width - MARGIN
     };
     let y = if config.corner.starts_with("top") { uy + MARGIN } else { uy + uh - height - MARGIN };
-    Some(Geometry { x, y, width, height, layout: layout.into(), monitor: screen.name.clone(), local_x: x - screen.x, local_y: y - screen.y })
+    Some(Geometry { x, y, width, height, layout: layout.into(), monitor: screen.name.clone(), local_x: x - screen.x, local_y: y - screen.y, corner: config.corner.clone() })
 }
 
 /// Monitors as Hyprland reports them. Sizes are divided by the scale and
@@ -406,6 +430,22 @@ mod tests {
         let with = geometry(&Config { layout: "strip".into(), ..Default::default() }, &wide, true, true).unwrap();
         let without = geometry(&Config { layout: "strip".into(), ..Default::default() }, &wide, true, false).unwrap();
         assert!(without.width < with.width);
+    }
+
+    #[test]
+    fn a_window_larger_than_asked_is_lined_up_by_its_corner() {
+        let screens = [screen("a", 0, 1920, 1080, true)];
+        // Asked for 188 x 137; the desktop made the window 200 x 200.
+        let top_right = geometry(&Config::default(), &screens, false, false).unwrap();
+        let (x, y) = top_right.window_origin(200, 200);
+        assert_eq!((x + 200, y), (top_right.x + top_right.width, top_right.y), "right and top edges meet");
+        let bottom_left = geometry(&Config { corner: "bottom-left".into(), ..Default::default() }, &screens, false, false).unwrap();
+        let (x, y) = bottom_left.window_origin(200, 200);
+        assert_eq!((x, y + 200), (bottom_left.x, bottom_left.y + bottom_left.height), "left and bottom edges meet");
+        let centre = geometry(&Config { corner: "top-center".into(), ..Default::default() }, &screens, false, false).unwrap();
+        assert_eq!(centre.window_origin(200, 200).0 + 100, centre.x + centre.width / 2);
+        // A window exactly as asked needs no correction.
+        assert_eq!(top_right.window_origin(top_right.width, top_right.height), (top_right.x, top_right.y));
     }
 
     #[test]

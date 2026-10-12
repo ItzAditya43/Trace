@@ -2039,6 +2039,10 @@ struct OverlayView {
     open: bool,
     /// "strip" | "panel": how it is laid out right now.
     layout: String,
+    /// The size of the numbers' box inside the window, and the corner it sits in.
+    width: i32,
+    height: i32,
+    anchor: String,
     monitors: Vec<String>,
     /// Whether clicks pass through it and it stays above other windows on this desktop.
     desktop_support: bool,
@@ -2053,7 +2057,10 @@ fn get_overlay(app: tauri::AppHandle) -> OverlayView {
     OverlayView {
         config: overlay::config(),
         open: app.get_webview_window("overlay").is_some(),
-        layout: at.map(|g| g.layout).unwrap_or_else(|| "panel".into()),
+        layout: at.as_ref().map(|g| g.layout.clone()).unwrap_or_else(|| "panel".into()),
+        width: at.as_ref().map(|g| g.width).unwrap_or(0),
+        height: at.as_ref().map(|g| g.height).unwrap_or(0),
+        anchor: at.as_ref().map(|g| g.corner.clone()).unwrap_or_default(),
         monitors: overlay::screens().into_iter().map(|s| s.name).collect(),
         desktop_support: hypr::available() && hypr::is_lua(),
         mangohud: sys_util::has_tool("mangohud"),
@@ -2494,6 +2501,31 @@ fn place_overlay(app: &tauri::AppHandle, at: overlay::Geometry) {
         .always_on_top(true)
         .skip_taskbar(true)
         .build();
+    if built.is_ok() {
+        // The desktop may hand back a larger window than asked for; once it
+        // is up, line it up by the corner the numbers are anchored to.
+        let target = at.clone();
+        std::thread::spawn(move || {
+            for _ in 0..20 {
+                std::thread::sleep(std::time::Duration::from_millis(150));
+                let clients = sys_util::run_lossy(std::process::Command::new("hyprctl").args(["clients", "-j"]));
+                let Ok(serde_json::Value::Array(list)) = serde_json::from_str::<serde_json::Value>(&clients) else {
+                    return;
+                };
+                let Some(window) = list.iter().find(|c| c["title"] == "Trace Overlay" && c["mapped"] == true) else {
+                    continue;
+                };
+                let (w, h) = (window["size"][0].as_i64().unwrap_or(0) as i32, window["size"][1].as_i64().unwrap_or(0) as i32);
+                let (x, y) = target.window_origin(w, h);
+                sys_util::run(std::process::Command::new("hyprctl").args([
+                    "eval",
+                    &format!(r#"hl.dispatch(hl.dsp.window.move({{ x = {x}, y = {y}, exact = true, window = "title:^Trace Overlay$" }}))"#),
+                ]))
+                .ok();
+                return;
+            }
+        });
+    }
     *OVERLAY_AT.lock().unwrap() = built.is_ok().then_some(at);
 }
 

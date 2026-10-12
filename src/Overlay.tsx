@@ -16,6 +16,9 @@ interface OverlayView {
   config: OverlayConfig;
   open: boolean;
   layout: string;
+  width: number;
+  height: number;
+  anchor: string;
   monitors: string[];
   desktop_support: boolean;
   mangohud: boolean;
@@ -111,14 +114,19 @@ export function Overlay() {
     "--overlay-backdrop": view.config.backdrop,
     "--overlay-scale": view.config.text_scale,
   } as React.CSSProperties;
+  // The window can be larger than the numbers need (the toolkit has a smallest size),
+  // so they are pinned to the chosen corner inside it; the rest stays invisible.
+  const [vertical, horizontal] = (view.anchor || "top-right").split("-");
   return (
-    <div className={`overlay overlay-${view.layout}`} style={style}>
-      {cells.map(([label, value, level]) => (
-        <div key={label} className="overlay-cell">
-          <span className="overlay-label">{label}</span>
-          <span className={`overlay-value${level ? ` overlay-${level}` : ""}`}>{value}</span>
-        </div>
-      ))}
+    <div className={`overlay-anchor overlay-${vertical} overlay-${horizontal}`}>
+      <div className={`overlay overlay-${view.layout}`} style={{ ...style, width: view.width || undefined, height: view.height || undefined }}>
+        {cells.map(([label, value, level]) => (
+          <div key={label} className="overlay-cell">
+            <span className="overlay-label">{label}</span>
+            <span className={`overlay-value${level ? ` overlay-${level}` : ""}`}>{value}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

@@ -10,6 +10,8 @@ Trace needs Linux, systemd and WebKitGTK 4.1. Everything else is optional: a fea
 | VPN kill switch, per-app routing | nftables, and the `nft_socket` kernel module |
 | Firewall section | firewalld |
 | Window, workspace, display and colour control | Hyprland; display arrangement and colour need its Lua configuration |
+| Stats overlay staying on top and click-through | Hyprland with its Lua configuration |
+| Frame rate in the overlay | MangoHud, added to the game's launch options |
 | External monitor brightness | `ddcutil` |
 | Sound per app, noise filter, equaliser | PipeWire with `pipewire-pulse` (`pactl`) |
 | Drive health and self-test | `smartctl` |
