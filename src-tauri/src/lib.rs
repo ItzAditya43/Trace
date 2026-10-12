@@ -2377,6 +2377,60 @@ fn get_app_info(app: tauri::AppHandle, state: tauri::State<AppState>) -> AppInfo
 
 // ---- tray ----
 
+// The web engine keeps a closed window's process around in case it is
+// needed again, a couple of hundred megabytes each. Trace remembers which
+// process belongs to which window and ends it once the window is gone.
+static WEB_PROCESSES: Mutex<Option<std::collections::HashMap<String, Vec<u32>>>> = Mutex::new(None);
+static WEB_ORPHANS: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+
+fn web_processes() -> Vec<u32> {
+    let me = std::process::id().to_string();
+    sys_util::run_lossy(std::process::Command::new("ps").args(["--ppid", &me, "-o", "pid=,comm="]))
+        .lines()
+        .filter_map(|l| {
+            let mut f = l.split_whitespace();
+            let pid = f.next()?.parse().ok()?;
+            f.next()?.starts_with("WebKitWebProc").then_some(pid)
+        })
+        .collect()
+}
+
+/// Call with the engine processes that existed just before a window was
+/// made; whatever appears afterwards is that window's.
+fn window_opened(label: &str, before: Vec<u32>) {
+    let label = label.to_string();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        let now = web_processes();
+        let mut new: Vec<u32> = now.iter().copied().filter(|p| !before.contains(p)).collect();
+        let mut orphans = WEB_ORPHANS.lock().unwrap();
+        if new.is_empty() {
+            // No new process: the engine reused one left by a closed window. It is in use again.
+            new = orphans.iter().copied().filter(|p| now.contains(p)).collect();
+        }
+        orphans.retain(|p| !new.contains(p));
+        WEB_PROCESSES.lock().unwrap().get_or_insert_with(Default::default).insert(label, new);
+    });
+}
+
+fn window_closed(label: &str) {
+    let Some(pids) = WEB_PROCESSES.lock().unwrap().get_or_insert_with(Default::default).remove(label) else {
+        return;
+    };
+    WEB_ORPHANS.lock().unwrap().extend(&pids);
+    std::thread::spawn(move || {
+        // Long enough for a window opened straight afterwards to claim it back.
+        std::thread::sleep(std::time::Duration::from_secs(4));
+        let mut orphans = WEB_ORPHANS.lock().unwrap();
+        for pid in pids {
+            if orphans.contains(&pid) && web_processes().contains(&pid) {
+                unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+            }
+            orphans.retain(|p| *p != pid);
+        }
+    });
+}
+
 /// A page the window should open on, set before the window exists.
 static PENDING_NAV: Mutex<Option<(String, String)>> = Mutex::new(None);
 
@@ -2389,7 +2443,10 @@ fn show_main_window(app: &tauri::AppHandle) {
         use tauri::Emitter;
         let window = handle.get_webview_window("main").or_else(|| {
             let config = handle.config().app.windows.first()?.clone();
-            tauri::WebviewWindowBuilder::from_config(&handle, &config).ok()?.build().ok()
+            let before = web_processes();
+            let built = tauri::WebviewWindowBuilder::from_config(&handle, &config).ok()?.build().ok();
+            window_opened("main", before);
+            built
         });
         if let Some(window) = window {
             window.emit("trace-visible", true).ok();
@@ -2449,6 +2506,7 @@ fn open_mini_window(app: &tauri::AppHandle, keep: bool) {
         ]))
         .ok();
     }
+    window_opened("mini", web_processes());
     tauri::WebviewWindowBuilder::new(app, "mini", tauri::WebviewUrl::App("index.html?mini=1".into()))
         .title("Trace Mini")
         .inner_size(320.0, 400.0)
@@ -2484,11 +2542,12 @@ fn place_overlay(app: &tauri::AppHandle, at: overlay::Geometry) {
     // the desktop's decisions, so they are stated there before the window appears.
     if hypr::available() && hypr::is_lua() {
         let rule = format!(
-            r#"hl.window_rule({{ name = "trace-overlay", match = {{ title = "^Trace Overlay$" }}, float = true, pin = true, no_focus = true, no_initial_focus = true, no_blur = true, no_shadow = true, no_dim = true, no_anim = true, border_size = 0, rounding = 0, monitor = "{}", size = "{} {}", move = "{} {}" }})"#,
+            r#"hl.window_rule({{ name = "trace-overlay", match = {{ title = "^Trace Overlay$" }}, float = true, pin = true, no_focus = true, no_initial_focus = true, no_blur = true, no_shadow = true, no_dim = true, no_anim = true, border_size = 0, rounding = 0, opacity = "1.0 override 1.0 override", monitor = "{}", size = "{} {}", move = "{} {}" }})"#,
             at.monitor, at.width, at.height, at.local_x, at.local_y
         );
         sys_util::run(std::process::Command::new("hyprctl").args(["eval", &rule])).ok();
     }
+    let before = web_processes();
     let built = tauri::WebviewWindowBuilder::new(app, "overlay", tauri::WebviewUrl::App("index.html?overlay=1".into()))
         .title("Trace Overlay")
         .inner_size(at.width as f64, at.height as f64)
@@ -2502,6 +2561,7 @@ fn place_overlay(app: &tauri::AppHandle, at: overlay::Geometry) {
         .skip_taskbar(true)
         .build();
     if built.is_ok() {
+        window_opened("overlay", before);
         // The desktop may hand back a larger window than asked for; once it
         // is up, line it up by the corner the numbers are anchored to.
         let target = at.clone();
@@ -3165,6 +3225,9 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .on_window_event(|window, event| {
+            if let tauri::WindowEvent::Destroyed = event {
+                window_closed(window.label());
+            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 // Only the main window hides to the tray; the mini window
                 // really closes, so it stops refreshing.
@@ -3211,6 +3274,7 @@ pub fn run() {
                 Err(e) => eprintln!("trace: no tray icon on this desktop ({e})"),
             }
             let args: Vec<String> = std::env::args().collect();
+            window_opened("main", Vec::new());
             if handle_cli(app.handle(), &args) && !start_hidden {
                 show_main_window(app.handle());
             } else if start_hidden {
