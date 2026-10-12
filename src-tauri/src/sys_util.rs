@@ -124,6 +124,10 @@ pub fn notify(title: &str, body: &str, critical: bool) {
             body,
         ])
         .spawn()
+        .map(|mut child| {
+            // Collect it when it exits, or it stays behind as a dead entry for as long as Trace runs.
+            std::thread::spawn(move || child.wait().ok());
+        })
         .ok();
 }
 

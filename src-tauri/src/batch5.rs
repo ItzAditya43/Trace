@@ -85,8 +85,15 @@ pub fn maintenance_run(now: i64) -> Result<Vec<String>, String> {
     let out = run_privileged(&script)?;
     let mut report: Vec<String> = out.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
     if docker_usable() {
-        let pruned = run_lossy(Command::new("docker").args(["system", "prune", "-f"]));
-        report.push(format!("Docker leftovers: {}", pruned.lines().last().unwrap_or("nothing to remove")));
+        // Only what nothing can be using: untagged image layers and the build cache.
+        // Stopped containers are left alone; they may hold someone's work.
+        let images = run_lossy(Command::new("docker").args(["image", "prune", "-f"]));
+        let cache = run_lossy(Command::new("docker").args(["builder", "prune", "-f"]));
+        report.push(format!(
+            "Docker: untagged images — {}; build cache — {}",
+            images.lines().last().unwrap_or("nothing to remove").to_lowercase(),
+            cache.lines().last().unwrap_or("nothing to remove").to_lowercase()
+        ));
     }
     let mut state: MaintenanceState = load_json("maintenance.json");
     state.last_run = now;

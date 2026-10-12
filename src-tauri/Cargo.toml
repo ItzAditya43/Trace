@@ -1,6 +1,6 @@
 [package]
 name = "trace"
-version = "1.0.0"
+version = "1.0.1"
 description = "Trace - Linux Machine Observatory"
 authors = ["adityap10"]
 edition = "2021"

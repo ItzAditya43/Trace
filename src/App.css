@@ -2690,3 +2690,22 @@ code {
   flex: 1 1 100%;
   text-align: center;
 }
+
+.bar-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.no-wrap {
+  flex: none;
+  white-space: nowrap;
+}
+
+.event-time {
+  margin-right: 6px;
+}
+
+.bar-row-named {
+  grid-template-columns: 130px 1fr auto;
+}

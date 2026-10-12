@@ -18,28 +18,31 @@ At the bottom, **Choose and arrange these cards** hides cards and changes their 
 
 - **Quick Rescue**: the heaviest apps with Freeze and Quit, for when memory has run out.
 - **Possible Memory Leaks**: appears when an app's memory has only climbed for three hours or more.
-- **Distribution**: every byte of RAM by purpose (apps, file cache, shared, kernel, free).
-- **Apps**: per-app RAM and swap, with shared pages divided fairly between the apps sharing them. Each app can be restarted, frozen, quit, or given a CPU or memory limit without a password.
-- **Growth**: how each app's memory moved over time.
+- **Where Your RAM Is**: every byte of RAM by purpose (apps, compressed swap, file cache, kernel, graphics, shared, free).
+- **Memory by App**: per-app RAM and swap, with shared pages divided fairly between the apps sharing them. Each app can be restarted, frozen, quit, or given a CPU or memory limit without a password.
+- **Growth Over Time**: how each app's memory moved over the last hour to seven days.
 - **Swap**: swap devices and how well compressed memory is doing.
 
 ## Activity
 
-Which apps are reading and writing the disk, sending and receiving on the network, and waking the processor, measured over the last few seconds.
+Two cards. **Drives Right Now** shows how busy each drive is. **Who Is Busy** lists which apps are reading and writing the disk, sending and receiving on the network, and waking the processor, measured over the last few seconds.
 
 ## Hardware
 
 - **Sensors**: everything the machine reports, with a short trend.
 - **Ports & Connections**: charger, USB devices with their link speed and power draw, video outputs, network sockets, audio jacks. Each USB device has switches for *may wake the machine* and *may power down when idle*.
-- **Temperature Rules**: change a setting while the machine is hot and put it back when it cools.
+- **Fans**: each fan's speed, with automatic and full speed where the kernel offers that switch.
+- **Temperature Rules**: when the hottest sensor stays above a temperature for 30 seconds, change a setting; undo it once it has cooled 10°C below.
 - **Cooling Test**: loads every core (and optionally the graphics chip) for 30 to 120 seconds and reports the peak temperature and how much the processor slowed itself. It stops by itself at 98°C.
-- **CPU power**, **Graphics Cards** (which apps use which card, and whether the dedicated one is powered down), **Brightness** for built-in and external monitors.
+- **CPU & Power**: power profile, firmware thermal profile, governor, energy preference, and which cores are online.
+- **Graphics Cards**: which apps use which card and how much video memory, and whether the dedicated card is powered down.
+- **Brightness** for built-in and external monitors, and **Wireless Devices** with the battery level of mice, keyboards and headsets that report one.
 - **Displays**: resolution, refresh rate, scale, rotation, position, mirroring, adaptive sync, saved layouts that apply themselves when a monitor is connected, and a night-light schedule.
 - **Colour Per Monitor**: colour mode, saturation, brightness of normal content, and a colour profile file.
 
 ## Health
 
-- **Health score** with every issue listed.
+- **Machine Health**: the score with every issue listed, and **Restart Needed?**, which says whether an update replaced the running kernel or graphics driver.
 - **Drives**: SMART health, wear, temperature, a self-test button, and how wear has moved since Trace first read it.
 - **Battery Over Time**: capacity history, recent sleeps and what each cost, and *Charge to full this once* or *have it full by* a time when a charge limit is set.
 - **Battery Drain Per App**: watches for three seconds and splits the power draw between apps. It learns this machine's own idle draw from time spent on battery.
@@ -51,7 +54,7 @@ Which apps are reading and writing the disk, sending and receiving on the networ
 
 ## History
 
-Charts for CPU, memory, swap, stall time and temperature over one hour to thirty days. Hover to inspect; warnings are marked along the bottom. Below is a disk usage explorer.
+Charts for CPU, memory, swap, GPU, time stalled on memory and on disk, and how full each disk is, over one hour to thirty days. Hover to inspect; warnings are marked along the bottom and listed under **What Happened**. Below are a storage breakdown and a disk usage explorer.
 
 ## Logs
 
@@ -68,7 +71,7 @@ Any period exports as JSON.
 ## Investigate
 
 - **What's slowing me down?** Looks at the last few minutes and names the cause.
-- **Port lookup**: which program is listening on a port.
+- **Who's using this port?** Which program is listening on a port.
 
 ## Projects
 

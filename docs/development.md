@@ -30,7 +30,9 @@ cargo test                 # the automated suite
 cargo test -- --ignored    # tests that act on the real machine
 ```
 
-The ignored tests change things for real (they toggle a Wi-Fi setting and put it back, start and stop the equaliser, run a backup into a scratch folder), so read one before running it. Some need hardware or tools that a given machine may not have.
+The ignored tests change things for real, so read one before running it. Most put back what they change: they toggle a Wi-Fi setting, start and stop the equaliser, run a backup into a scratch folder, switch a monitor to HDR and back. Some need hardware or tools that a given machine may not have.
+
+`src-tauri/src/live_tests.rs` holds two groups. `user_live` runs as you. `root_live` needs administrator rights for everything it does (maintenance, USB power, erasing a throwaway in-memory drive, network blocking), so run the test binary itself as root for a single password prompt; the top of that file shows the command. The maintenance test really does clear old logs and cached packages.
 
 `live_readers_do_not_panic` runs every read-only collector against the real machine. With `TRACE_DUMP_DIR` set it also writes each result as JSON, which is useful as realistic data when working on the window.
 

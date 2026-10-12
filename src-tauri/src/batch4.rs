@@ -462,14 +462,15 @@ pub fn failed_logins() -> Vec<(String, String)> {
         .map(|(when, rest)| {
             let program = rest.split(['[', ':']).next().unwrap_or("");
             let what = match program {
-                "qs" | "hyprlock" | "swaylock" | "gtklock" => "lock screen",
-                "sshd" | "sshd-session" => "remote login (SSH)",
-                "sudo" | "su" => "sudo in a terminal",
-                p if p.starts_with("polkit") => "password prompt",
-                "login" | "sddm-helper" | "gdm-password" | "greetd" => "login screen",
-                other => other,
+                "qs" | "hyprlock" | "swaylock" | "gtklock" => "at the lock screen",
+                "sshd" | "sshd-session" => "for a remote login (SSH)",
+                "sudo" | "su" => "for sudo in a terminal",
+                p if p.starts_with("polkit") => "at a password prompt",
+                "login" | "sddm-helper" | "gdm-password" | "greetd" => "at the login screen",
+                _ => "",
             };
-            (when, format!("Wrong password at the {what}"))
+            let text = if what.is_empty() { format!("Wrong password ({program})") } else { format!("Wrong password {what}") };
+            (when, text)
         })
         .collect()
 }

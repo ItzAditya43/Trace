@@ -46,7 +46,7 @@ export function PowerPerApp() {
           )}
           {report.apps.length === 0 && <p className="diagnose-hint">Nothing is using the processor right now.</p>}
           {report.apps.map((a) => (
-            <div key={a.app} className="bar-row">
+            <div key={a.app} className="bar-row bar-row-named">
               <span className="bar-label" title={a.app}>
                 {a.app}
               </span>
@@ -351,7 +351,7 @@ export function Connections() {
       })}
       <p className="diagnose-hint">
         Trace notes these once a minute and keeps the list on this machine. “New” means the app had not been seen
-        talking to that address before today. Addresses, not countries: Trace ships no location database.
+        talking to that address before today. “Whose is it?” looks up the name behind an address and the country it is registered in.
       </p>
     </section>
   );
@@ -515,7 +515,7 @@ export function WifiChannels() {
         {air.signal != null && air.signal > 0 && <span className="mem-muted">Your signal: {air.signal}%</span>}
       </div>
       {air.channels.map((c) => (
-        <div key={c.channel} className="bar-row">
+        <div key={c.channel} className="bar-row bar-row-named">
           <span className="bar-label">
             Channel {c.channel}
             {c.yours ? " (yours)" : ""}

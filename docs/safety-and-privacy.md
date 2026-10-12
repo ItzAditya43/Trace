@@ -41,8 +41,8 @@ Nothing, unless you use one of these:
 |---|---|
 | Update banner | This project's release list on GitHub, on launch. Skipped on a network marked as limited data. |
 | VPN Gate | The public VPN Gate server list, when you open it. |
-| Public address check | An address-echo service, when you press it. |
-| Speed test | A content network's test file, when you press it. |
+| Public address check | Cloudflare (1.1.1.1), when you press it, and once after connecting a VPN if you have used it before. |
+| Speed test | A 25 MB test file from Cloudflare, when you press it. |
 | Before You Update | Your distribution's mirrors and news feed, when you press it. |
 | Vulnerable packages | The Arch security tracker's public list, when you press it. Nothing about your system is sent. |
 | Whose is it? | A name lookup and a registry lookup for that one address, when you press it. |

@@ -21,10 +21,10 @@ Every setting can be **undone**, or **reset to the value Trace first saw** on th
 
 ## Keeping settings
 
-Most settings last until the next restart. **Keep** makes one permanent:
+Most settings last until the next restart. Ticking **keep after restart** on a setting makes it permanent:
 
 - settings the system stores itself are simply left in place,
-- settings that reset at boot are re-applied at boot by a small script Trace installs,
+- settings that reset at boot are re-applied about 15 seconds after boot by a small system service Trace installs (`/etc/trace/tweaks.sh`),
 - settings that belong to your desktop session are re-applied when Trace starts.
 
 ## Presets

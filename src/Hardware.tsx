@@ -572,10 +572,10 @@ function PortsCard() {
           <h3 className="sub-heading">Audio jacks</h3>
           {data.audio.map((a, i) => (
             <div key={i} className="meta-row">
-              <span>
+              <span className="wifi-name" title={`${a.port} — ${a.device}`}>
                 {dot(a.state !== "not available")} {a.port} <span className="mem-muted">{a.device}</span>
               </span>
-              <span>
+              <span className="no-wrap">
                 {a.state}
                 {a.active ? " · in use" : ""}
               </span>

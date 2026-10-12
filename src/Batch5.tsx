@@ -66,7 +66,7 @@ export function Maintenance() {
       ))}
       <p className="diagnose-hint">
         Trims the drives, keeps the two newest versions of each package, cuts the system log to 500 MB, removes crash
-        dumps older than a week{s.docker ? " and clears unused Docker leftovers" : ""}. Run by hand it asks for your
+        dumps older than a week{s.docker ? " and clears Docker's untagged images and build cache (containers are left alone)" : ""}. Run by hand it asks for your
         password each time and reminds you after a week; switched to run by itself it asks once.
       </p>
     </section>
@@ -549,7 +549,7 @@ export function GroupBudgets({ apps }: { apps: string[] }) {
       {groups.data.map((g) => {
         const share = g.budget.max_gb > 0 ? Math.min(100, (g.used_bytes / (g.budget.max_gb * 1e9)) * 100) : Math.min(100, (g.cpu_percent / g.budget.max_cpu_percent) * 100);
         return (
-          <div key={g.budget.name} className="bar-row">
+          <div key={g.budget.name} className="bar-row bar-row-named">
             <span className="bar-label" title={g.budget.apps.join(", ")}>
               <button className="link-button" title="Remove this group" onClick={() => save(current.filter((b) => b.name !== g.budget.name))}>
                 ×

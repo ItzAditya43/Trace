@@ -168,7 +168,7 @@ function Drives({ drives }: { drives: HealthOverview["drives"] }) {
   }
 
   return (
-    <section className="panel">
+    <section className="panel wide">
       <h2>Drives</h2>
       <table className="proc-table">
         <thead>
@@ -305,12 +305,12 @@ export default function Health() {
           <div className="mem-stats">
             <div className="mem-stat">
               <span className="mem-stat-value">{b.percent.toFixed(0)}%</span>
-              <span className="mem-stat-label">{b.status.toLowerCase()}</span>
+              <span className="mem-stat-label">{b.power_watts < 0.3 && b.percent >= 95 ? "full, on the charger" : b.status.toLowerCase()}</span>
             </div>
             <div className="mem-stat">
               <span className="mem-stat-value">{b.power_watts.toFixed(1)} W</span>
               <span className="mem-stat-label">
-                {b.status === "Discharging" ? "being drawn" : "flowing in"}
+                {b.power_watts < 0.3 ? "nothing flowing" : b.status === "Discharging" ? "being drawn" : "flowing in"}
                 {b.hours_remaining != null &&
                   ` · about ${b.hours_remaining.toFixed(1)} h left`}
               </span>

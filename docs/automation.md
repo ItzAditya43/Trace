@@ -41,7 +41,7 @@ When a Steam, Proton, Lutris or gamescope game starts, Trace applies a preset an
 
 ## Temperature rules
 
-On the Hardware page: above a temperature for a while, change a setting; below another, put it back.
+On the Hardware page: when the hottest sensor stays above a temperature for 30 seconds, change a setting; undo it once it has cooled 10°C below. Only changes that need no password can run by themselves unless the trusted helper is on.
 
 ## Reminders and small things
 

@@ -15,7 +15,7 @@ Built with Tauri (Rust) and React. Everything it tells you comes from measuremen
 | **Activity** | Which apps are using the disk and network right now, and which wake the processor most. |
 | **Hardware** | Every sensor, both graphics cards and what is using them, ports and what is plugged in, displays (layout, colour, saved layouts), brightness, temperature rules, a cooling test. |
 | **Health** | Battery wear and drain per app, drives and their wear, failed services, a security check-up, microphone and camera use, what grew on the disk. |
-| **History** | Charts from one hour to thirty days with warnings marked on the timeline, and a disk usage explorer. |
+| **History** | Charts for CPU, memory, swap, GPU, stalls and disks from one hour to thirty days, with warnings marked on the timeline, and a disk usage explorer. |
 | **Logs** | A daily, weekly, monthly and yearly logbook: screen time hour by hour, apps, crashes, battery, data used, sleep, package changes, and what happened at the machine while you were away. |
 | **Investigate** | "What is slowing me down?" and which program owns a port. |
 | **Projects** | Every project's branch, uncommitted and unpushed work, build-file cleanup, and a work mode that starts its containers and dev command. |
@@ -51,7 +51,7 @@ See [Getting started](docs/getting-started.md) for requirements, the launcher en
 
 ## How it behaves
 
-- **It keeps running in the tray** when the window is closed, so the logbook, rules, schedules and alerts keep working. Launching it again brings the existing window back. A hidden Trace costs about one percent of one processor core.
+- **It keeps running in the tray** when the window is closed, so the logbook, rules, schedules and alerts keep working. Launching it again brings the existing window back. A hidden Trace costs about one percent of one processor core and, with its window engine loaded, roughly 500 to 600 MB of memory.
 - **Nothing runs as administrator by default.** Actions that need it go through the desktop's own password prompt, one prompt per batch. An optional trusted helper lets chosen settings change without a prompt; it accepts only values from the catalogue and logs everything it does.
 - **Every change is read back.** If the system ignored a setting, Trace says so instead of showing it as applied.
 - **It never updates itself.** It checks this repository's releases on launch and shows a banner when a newer version exists.

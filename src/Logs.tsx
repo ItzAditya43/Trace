@@ -378,8 +378,8 @@ export default function Logs() {
           </div>
         )}
         <p className="diagnose-hint">
-          Time each app's window was in focus. Trace can't tell whether you
-          were at the keyboard, so a window left focused overnight still counts.
+          Time each app's window was in front while you were actually there: five minutes without
+          touching anything stops the clock, unless sound is playing.
         </p>
       </section>
 
