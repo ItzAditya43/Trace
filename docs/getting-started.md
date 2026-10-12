@@ -67,7 +67,7 @@ A small always-on-top window with CPU, memory, temperature, network and the six 
 A see-through panel of live numbers that sits on top of whatever you are doing, including a game. Clicks pass straight through it and it never takes the keyboard. Open it from the tray menu, with `trace overlay`, or from **Control → Display & Devices → Stats Overlay**, which is also where it is set up, since the overlay itself can't be clicked:
 
 - **Shape**: a slim strip, a small panel, or automatic (a strip while a game runs, a panel otherwise).
-- **Where**: any corner or the middle of the top or bottom edge, on a chosen monitor or whichever is in use. It keeps clear of bars and stays inside the screen; a strip too wide for a small screen becomes a panel.
+- **Where**: any corner or the middle of the top or bottom edge, on a chosen monitor, or automatically: the screen a running game is on, otherwise whichever is in use. It keeps clear of bars and stays inside the screen; a strip too wide for a small screen becomes a panel.
 - **Tint and text size**, and which readings to show: frame rate, CPU, GPU, memory, temperature, fan, network, battery, clock.
 
 **Frame rate.** Only a game knows its own frame rate, so the game has to report it. The settings card gives a launch option to paste into the game's properties in Steam; it runs MangoHud inside the game, drawing nothing, and Trace shows the number. Without it the overlay shows everything except frame rate.

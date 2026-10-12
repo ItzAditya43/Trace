@@ -81,8 +81,8 @@ pub struct Screen {
     /// Space taken by bars: left, top, right, bottom.
     pub reserved: [i32; 4],
     pub focused: bool,
-    /// Something is fullscreen on it right now.
-    pub fullscreen: bool,
+    /// A game's own window is on it right now.
+    pub game: bool,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -146,14 +146,12 @@ const PANEL_ROW: f32 = 25.0;
 /// not fit the monitor's width becomes a panel; a panel taller than the
 /// monitor is cut to it.
 pub fn geometry(config: &Config, screens: &[Screen], game_running: bool, fps_available: bool) -> Option<Geometry> {
-    // A chosen monitor wins. Otherwise: while a game runs, the screen showing
-    // something fullscreen (the game), even if the keyboard is on the other one;
-    // failing that, the screen in use.
+    // A chosen monitor wins. Otherwise the screen the game's window is on,
+    // even if the keyboard is on the other one; failing that, the screen in use.
     let screen = screens
         .iter()
         .find(|s| s.name == config.monitor)
-        .or_else(|| screens.iter().find(|s| game_running && s.fullscreen && s.focused))
-        .or_else(|| screens.iter().find(|s| game_running && s.fullscreen))
+        .or_else(|| screens.iter().find(|s| game_running && s.game))
         .or_else(|| screens.iter().find(|s| s.focused))
         .or(screens.first())?;
     let [left, top, right, bottom] = screen.reserved;
@@ -201,14 +199,19 @@ pub fn screens() -> Vec<Screen> {
     let Ok(serde_json::Value::Array(list)) = serde_json::from_str(&out) else {
         return Vec::new();
     };
-    let workspaces = crate::sys_util::run_lossy(std::process::Command::new("hyprctl").args(["workspaces", "-j"]));
-    let fullscreen_workspaces: Vec<i64> = serde_json::from_str::<serde_json::Value>(&workspaces)
+    // Which monitors hold a window that belongs to a game.
+    let clients = crate::sys_util::run_lossy(std::process::Command::new("hyprctl").args(["clients", "-j"]));
+    let game_monitors: Vec<i64> = serde_json::from_str::<serde_json::Value>(&clients)
         .ok()
         .and_then(|v| v.as_array().cloned())
         .unwrap_or_default()
         .iter()
-        .filter(|w| w["hasfullscreen"].as_bool().unwrap_or(false))
-        .filter_map(|w| w["id"].as_i64())
+        .filter(|c| c["mapped"].as_bool().unwrap_or(false))
+        .filter(|c| {
+            let pid = c["pid"].as_i64().unwrap_or(0);
+            fs::read_to_string(format!("/proc/{pid}/cmdline")).is_ok_and(|cmdline| crate::batch5::game_from_cmdline(&cmdline).is_some())
+        })
+        .filter_map(|c| c["monitor"].as_i64())
         .collect();
     list.iter()
         .filter(|m| !m["disabled"].as_bool().unwrap_or(false))
@@ -227,7 +230,7 @@ pub fn screens() -> Vec<Screen> {
                 height: h as i32,
                 reserved: [reserved.first().copied().unwrap_or(0), reserved.get(1).copied().unwrap_or(0), reserved.get(2).copied().unwrap_or(0), reserved.get(3).copied().unwrap_or(0)],
                 focused: m["focused"].as_bool().unwrap_or(false),
-                fullscreen: m["activeWorkspace"]["id"].as_i64().is_some_and(|id| fullscreen_workspaces.contains(&id)),
+                game: m["id"].as_i64().is_some_and(|id| game_monitors.contains(&id)),
             }
         })
         .collect()
@@ -418,7 +421,7 @@ mod tests {
     use super::*;
 
     fn screen(name: &str, x: i32, w: i32, h: i32, focused: bool) -> Screen {
-        Screen { name: name.into(), x, y: 0, width: w, height: h, reserved: [0, 45, 0, 0], focused, fullscreen: false }
+        Screen { name: name.into(), x, y: 0, width: w, height: h, reserved: [0, 45, 0, 0], focused, game: false }
     }
 
     fn inside(g: &Geometry, s: &Screen) -> bool {
@@ -458,11 +461,11 @@ mod tests {
     }
 
     #[test]
-    fn a_fullscreen_game_on_the_other_screen_gets_the_overlay() {
+    fn the_screen_showing_the_game_gets_the_overlay() {
         let mut screens = [screen("laptop", 0, 1920, 1080, true), screen("tv", 1920, 1920, 1080, false)];
-        screens[1].fullscreen = true;
+        screens[1].game = true;
         assert_eq!(geometry(&Config::default(), &screens, true, false).unwrap().monitor, "tv", "the game's screen, though the keyboard is on the laptop");
-        assert_eq!(geometry(&Config::default(), &screens, false, false).unwrap().monitor, "laptop", "a fullscreen video is not a game");
+        assert_eq!(geometry(&Config::default(), &screens, false, false).unwrap().monitor, "laptop", "no game running: the screen in use");
         assert_eq!(geometry(&Config { monitor: "laptop".into(), ..Default::default() }, &screens, true, false).unwrap().monitor, "laptop", "a chosen monitor always wins");
     }
 

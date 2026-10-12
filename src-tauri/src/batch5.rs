@@ -852,7 +852,7 @@ pub fn set_game_mode(mode: &GameMode) {
 }
 
 /// The name of a game from one process's command line, if it is one.
-fn game_from_cmdline(cmdline: &str) -> Option<String> {
+pub(crate) fn game_from_cmdline(cmdline: &str) -> Option<String> {
     if let Some(rest) = cmdline.split("/steamapps/common/").nth(1) {
         let name = rest.split(['/', '\0']).next().unwrap_or("");
         // The runtime and Proton are how games are started, not games.

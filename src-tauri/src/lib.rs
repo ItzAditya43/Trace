@@ -2602,7 +2602,8 @@ fn place_overlay(app: &tauri::AppHandle, at: overlay::Geometry) {
         .transparent(true)
         .decorations(false)
         .shadow(false)
-        .resizable(false)
+        // Resizable so that Trace itself can reshape it; it can't be grabbed, as it takes no clicks.
+        .resizable(true)
         .focused(false)
         .always_on_top(true)
         .skip_taskbar(true)
