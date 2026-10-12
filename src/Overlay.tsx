@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { Segmented, usePoll } from "./ui";
 
 interface OverlayConfig {
@@ -100,12 +101,15 @@ export function Overlay() {
     invoke<OverlayView>("get_overlay").then((v) => alive && setView(v));
     tick();
     const fast = setInterval(tick, 1000);
-    // Settings can change while it is up; the layout comes from where it was placed.
-    const slow = setInterval(() => invoke<OverlayView>("get_overlay").then((v) => alive && setView(v)), 5000);
+    // Told when it has been moved or reshaped; the slow check is only a safety net.
+    const refetch = () => invoke<OverlayView>("get_overlay").then((v) => alive && setView(v));
+    const stop = listen("overlay-changed", refetch);
+    const slow = setInterval(refetch, 10000);
     return () => {
       alive = false;
       clearInterval(fast);
       clearInterval(slow);
+      stop.then((off) => off());
     };
   }, []);
   if (!view || !data) return null;

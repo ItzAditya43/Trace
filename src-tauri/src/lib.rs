@@ -2542,11 +2542,48 @@ fn overlay_target() -> Option<overlay::Geometry> {
     overlay::geometry(&overlay::config(), &overlay::screens(), batch5::running_game().is_some(), overlay::fps_now().is_some())
 }
 
-/// Opens the see-through stats overlay at `at`, replacing one that is already there.
-/// It never takes clicks or keyboard focus: what is underneath stays usable.
+/// Lines the overlay window up once the desktop has settled on its real
+/// size, which can be larger than asked for.
+fn align_overlay(target: overlay::Geometry) {
+    std::thread::spawn(move || {
+        let mut last = (0, 0);
+        for _ in 0..12 {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            let clients = sys_util::run_lossy(std::process::Command::new("hyprctl").args(["clients", "-j"]));
+            let Ok(serde_json::Value::Array(list)) = serde_json::from_str::<serde_json::Value>(&clients) else {
+                return;
+            };
+            let Some(window) = list.iter().find(|c| c["title"] == "Trace Overlay" && c["mapped"] == true) else {
+                continue;
+            };
+            let size = (window["size"][0].as_i64().unwrap_or(0) as i32, window["size"][1].as_i64().unwrap_or(0) as i32);
+            let (x, y) = target.window_origin(size.0, size.1);
+            sys_util::run(std::process::Command::new("hyprctl").args([
+                "eval",
+                &format!(r#"hl.dispatch(hl.dsp.window.move({{ x = {x}, y = {y}, exact = true, window = "title:^Trace Overlay$" }}))"#),
+            ]))
+            .ok();
+            // A resize takes a moment to arrive; stop once the size has held still.
+            if size == last {
+                return;
+            }
+            last = size;
+        }
+    });
+}
+
+/// Puts the see-through stats overlay at `at`: moves and resizes the one
+/// that is open, or opens one. It never takes clicks or keyboard focus, so
+/// what is underneath stays usable.
 fn place_overlay(app: &tauri::AppHandle, at: overlay::Geometry) {
-    if let Some(old) = app.get_webview_window("overlay") {
-        old.destroy().ok();
+    use tauri::Emitter;
+    if let Some(window) = app.get_webview_window("overlay") {
+        window.set_size(tauri::LogicalSize::new(at.width as f64, at.height as f64)).ok();
+        *OVERLAY_AT.lock().unwrap() = Some(at.clone());
+        // The page lays itself out from the new shape and size.
+        window.emit("overlay-changed", ()).ok();
+        align_overlay(at);
+        return;
     }
     // Floating, pinned above everything, click-through and undecorated are
     // the desktop's decisions, so they are stated there before the window appears.
@@ -2572,29 +2609,7 @@ fn place_overlay(app: &tauri::AppHandle, at: overlay::Geometry) {
         .build();
     if built.is_ok() {
         window_opened("overlay", before);
-        // The desktop may hand back a larger window than asked for; once it
-        // is up, line it up by the corner the numbers are anchored to.
-        let target = at.clone();
-        std::thread::spawn(move || {
-            for _ in 0..20 {
-                std::thread::sleep(std::time::Duration::from_millis(150));
-                let clients = sys_util::run_lossy(std::process::Command::new("hyprctl").args(["clients", "-j"]));
-                let Ok(serde_json::Value::Array(list)) = serde_json::from_str::<serde_json::Value>(&clients) else {
-                    return;
-                };
-                let Some(window) = list.iter().find(|c| c["title"] == "Trace Overlay" && c["mapped"] == true) else {
-                    continue;
-                };
-                let (w, h) = (window["size"][0].as_i64().unwrap_or(0) as i32, window["size"][1].as_i64().unwrap_or(0) as i32);
-                let (x, y) = target.window_origin(w, h);
-                sys_util::run(std::process::Command::new("hyprctl").args([
-                    "eval",
-                    &format!(r#"hl.dispatch(hl.dsp.window.move({{ x = {x}, y = {y}, exact = true, window = "title:^Trace Overlay$" }}))"#),
-                ]))
-                .ok();
-                return;
-            }
-        });
+        align_overlay(at.clone());
     }
     *OVERLAY_AT.lock().unwrap() = built.is_ok().then_some(at);
 }
