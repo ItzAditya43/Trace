@@ -51,7 +51,7 @@ See [Getting started](docs/getting-started.md) for requirements, the launcher en
 
 ## How it behaves
 
-- **It keeps running in the tray** when the window is closed, so the logbook, rules, schedules and alerts keep working. Launching it again brings the existing window back. A hidden Trace costs about one percent of one processor core and, with its window engine loaded, roughly 500 to 600 MB of memory.
+- **It keeps running in the tray** when the window is closed, so the logbook, rules, schedules and alerts keep working. Launching it again brings the existing window back. A hidden Trace costs about one percent of one processor core and about 270 MB of memory (about 135 MB of it private to Trace; the rest is system libraries shared with other apps).
 - **Nothing runs as administrator by default.** Actions that need it go through the desktop's own password prompt, one prompt per batch. An optional trusted helper lets chosen settings change without a prompt; it accepts only values from the catalogue and logs everything it does.
 - **Every change is read back.** If the system ignored a setting, Trace says so instead of showing it as applied.
 - **It never updates itself.** It checks this repository's releases on launch and shows a banner when a newer version exists.
