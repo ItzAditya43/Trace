@@ -2709,3 +2709,92 @@ code {
 .bar-row-named {
   grid-template-columns: 130px 1fr auto;
 }
+
+/* ---- the see-through stats overlay ---- */
+html.overlay-root,
+html.overlay-root body,
+html.overlay-root #root {
+  background: transparent !important;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+}
+
+.overlay {
+  --pad: calc(3px * var(--overlay-scale, 1));
+  box-sizing: border-box;
+  color: #f4f6fb;
+  display: flex;
+  font-variant-numeric: tabular-nums;
+  gap: var(--pad);
+  height: 100%;
+  padding: var(--pad);
+  width: 100%;
+}
+
+.overlay-strip {
+  flex-direction: row;
+}
+
+.overlay-panel {
+  flex-direction: column;
+}
+
+.overlay-cell {
+  align-items: baseline;
+  background: rgba(8, 10, 16, var(--overlay-backdrop, 0.45));
+  border-radius: 6px;
+  display: flex;
+  flex: 1 1 0;
+  gap: 6px;
+  justify-content: space-between;
+  min-width: 0;
+  padding: 0 calc(7px * var(--overlay-scale, 1));
+  /* A dark edge on every side keeps light text readable on a bright background with no tint at all. */
+  text-shadow: 0 0 2px #000, 0 0 3px #000, 1px 1px 1px #000, -1px -1px 1px #000;
+  white-space: nowrap;
+}
+
+.overlay-strip .overlay-cell {
+  align-items: center;
+}
+
+.overlay-label {
+  color: #c3c9d6;
+  font-size: calc(9.5px * var(--overlay-scale, 1));
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+
+.overlay-value {
+  font-size: calc(14px * var(--overlay-scale, 1));
+  font-weight: 700;
+}
+
+.overlay-warn {
+  color: #ffd166;
+}
+
+.overlay-bad {
+  color: #ff7b72;
+}
+
+.corner-grid {
+  display: grid;
+  gap: 4px;
+  grid-template-columns: repeat(3, auto);
+}
+
+.launch-option {
+  background: #0c0e14;
+  border: 1px solid #1f2330;
+  border-radius: 6px;
+  flex: 1;
+  font-size: 11.5px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  padding: 6px 8px;
+  user-select: all;
+}

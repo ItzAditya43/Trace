@@ -16,6 +16,7 @@ import { AudioControl, CleanupControl, SessionControl } from "./ControlDesktop";
 import { VpnControl } from "./ControlVpn";
 import { DisplayControl, FirewallControl, WirelessControl } from "./ControlConnect";
 import { Reminders, WifiSignal } from "./Batch6";
+import { OverlaySettings } from "./Overlay";
 
 interface ProcessInfo {
   pid: number;
@@ -1343,6 +1344,7 @@ export default function Control() {
           <DisplayControl />
           <AudioControl />
           <AppMixer />
+          <OverlaySettings />
           <UsbControl />
           <ClipboardHistory />
         </>

@@ -164,6 +164,12 @@ function App() {
   const setTab = (page: PageKey) => go({ page });
 
   // `trace page <name>` and `trace panic` from a terminal or a key binding.
+  // A page asked for before this window existed is picked up here.
+  useEffect(() => {
+    invoke<[string, string] | null>("take_pending_nav")
+      .then((nav) => nav && go({ page: nav[0], ...(nav[1] ? { section: nav[1] } : {}) }))
+      .catch(() => {});
+  }, [go]);
   useEffect(() => {
     const stop = listen<{ page: string; section?: string }>("navigate", (event) =>
       go({ page: event.payload.page, ...(event.payload.section ? { section: event.payload.section } : {}) })

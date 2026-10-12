@@ -25,6 +25,7 @@ mod search;
 mod projects;
 mod namespace_control;
 mod network_control;
+mod overlay;
 mod packages;
 mod storage_explorer;
 mod sys_util;
@@ -2028,6 +2029,59 @@ fn apply_preset_by_id(state: tauri::State<AppState>, id: String) -> control_proc
 }
 
 #[tauri::command(async)]
+fn take_pending_nav() -> Option<(String, String)> {
+    PENDING_NAV.lock().unwrap().take()
+}
+
+#[derive(Serialize)]
+struct OverlayView {
+    config: overlay::Config,
+    open: bool,
+    /// "strip" | "panel": how it is laid out right now.
+    layout: String,
+    monitors: Vec<String>,
+    /// Whether clicks pass through it and it stays above other windows on this desktop.
+    desktop_support: bool,
+    mangohud: bool,
+    fps_launch_option: String,
+    fps_now: Option<f32>,
+}
+
+#[tauri::command(async)]
+fn get_overlay(app: tauri::AppHandle) -> OverlayView {
+    let at = OVERLAY_AT.lock().unwrap().clone();
+    OverlayView {
+        config: overlay::config(),
+        open: app.get_webview_window("overlay").is_some(),
+        layout: at.map(|g| g.layout).unwrap_or_else(|| "panel".into()),
+        monitors: overlay::screens().into_iter().map(|s| s.name).collect(),
+        desktop_support: hypr::available() && hypr::is_lua(),
+        mangohud: sys_util::has_tool("mangohud"),
+        fps_launch_option: overlay::fps_launch_option(),
+        fps_now: overlay::fps_now().map(|f| f.0),
+    }
+}
+
+#[tauri::command(async)]
+fn save_overlay(app: tauri::AppHandle, config: overlay::Config) {
+    overlay::save_config(&config.cleaned());
+    // Show the change straight away if it is on screen.
+    if app.get_webview_window("overlay").is_some() {
+        set_overlay(&app, Some(true));
+    }
+}
+
+#[tauri::command(async)]
+fn show_overlay(app: tauri::AppHandle, show: Option<bool>) {
+    set_overlay(&app, show)
+}
+
+#[tauri::command(async)]
+fn get_overlay_data() -> overlay::Data {
+    overlay::sample()
+}
+
+#[tauri::command(async)]
 fn get_focus() -> Option<batch3::Focus> {
     batch3::focus_current()
 }
@@ -2271,7 +2325,12 @@ fn handle_cli(app: &tauri::AppHandle, args: &[String]) -> bool {
         ["page", page] => {
             // "control:network" opens a page at one of its sections.
             let (page, section) = page.split_once(':').unwrap_or((page, ""));
-            app.emit("navigate", serde_json::json!({ "page": page, "section": section })).ok();
+            if app.get_webview_window("main").is_some() {
+                app.emit("navigate", serde_json::json!({ "page": page, "section": section })).ok();
+            } else {
+                // The window is about to be built; it asks for this once it is up.
+                *PENDING_NAV.lock().unwrap() = Some((page.to_string(), section.to_string()));
+            }
             true
         }
         ["panic"] => {
@@ -2281,6 +2340,10 @@ fn handle_cli(app: &tauri::AppHandle, args: &[String]) -> bool {
         }
         ["mini"] => {
             open_mini_window(app, false);
+            false
+        }
+        ["overlay"] => {
+            set_overlay(app, None);
             false
         }
         _ => !args.iter().any(|a| a == "--hidden"),
@@ -2300,23 +2363,53 @@ fn get_app_info(app: tauri::AppHandle, state: tauri::State<AppState>) -> AppInfo
     AppInfo {
         version: env!("CARGO_PKG_VERSION"),
         tray: state.tray.lock().unwrap().is_some(),
-        visible: app
-            .get_webview_window("main")
-            .and_then(|w| w.is_visible().ok())
-            .unwrap_or(true),
+        // The main window only exists while it is on screen.
+        visible: app.get_webview_window("main").is_some(),
     }
 }
 
 // ---- tray ----
 
+/// A page the window should open on, set before the window exists.
+static PENDING_NAV: Mutex<Option<(String, String)>> = Mutex::new(None);
+
+/// Shows the main window, building it first if it isn't there: while Trace
+/// sits in the tray the window and its web engine don't exist at all.
 fn show_main_window(app: &tauri::AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
+    let handle = app.clone();
+    // Windows are made on the main thread.
+    app.run_on_main_thread(move || {
         use tauri::Emitter;
-        window.emit("trace-visible", true).ok();
-        window.show().ok();
-        window.unminimize().ok();
-        window.set_focus().ok();
-    }
+        let window = handle.get_webview_window("main").or_else(|| {
+            let config = handle.config().app.windows.first()?.clone();
+            tauri::WebviewWindowBuilder::from_config(&handle, &config).ok()?.build().ok()
+        });
+        if let Some(window) = window {
+            window.emit("trace-visible", true).ok();
+            window.show().ok();
+            window.unminimize().ok();
+            window.set_focus().ok();
+        }
+    })
+    .ok();
+}
+
+/// Sends the main window away. With a tray to come back from, the window is
+/// destroyed outright, which is what gives its memory back.
+fn hide_main_window(app: &tauri::AppHandle) {
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        if let Some(window) = handle.get_webview_window("main") {
+            window.destroy().ok();
+        }
+    })
+    .ok();
+}
+
+/// Stays running with no window when there is somewhere to come back from.
+fn keeps_running_without_a_window(app: &tauri::AppHandle) -> bool {
+    let has_tray = app.state::<AppState>().tray.lock().unwrap().is_some();
+    automation::load().close_to_tray && (has_tray || std::env::args().any(|a| a == "--hidden"))
 }
 
 /// The tray icon. Implemented directly on the StatusNotifierItem protocol
@@ -2361,15 +2454,91 @@ fn open_mini_window(app: &tauri::AppHandle, keep: bool) {
 }
 
 fn toggle_main_window(app: &tauri::AppHandle) {
-    use tauri::Emitter;
-    let Some(window) = app.get_webview_window("main") else {
-        return;
-    };
-    if window.is_visible().unwrap_or(false) {
-        window.hide().ok();
-        window.emit("trace-visible", false).ok();
-    } else {
-        show_main_window(app);
+    match app.get_webview_window("main") {
+        Some(window) if window.is_visible().unwrap_or(false) => hide_main_window(app),
+        _ => show_main_window(app),
+    }
+}
+
+/// Where the overlay is now, so a change of monitor, layout or settings can be noticed.
+static OVERLAY_AT: Mutex<Option<overlay::Geometry>> = Mutex::new(None);
+
+fn overlay_target() -> Option<overlay::Geometry> {
+    overlay::geometry(&overlay::config(), &overlay::screens(), batch5::running_game().is_some(), overlay::fps_now().is_some())
+}
+
+/// Opens the see-through stats overlay at `at`, replacing one that is already there.
+/// It never takes clicks or keyboard focus: what is underneath stays usable.
+fn place_overlay(app: &tauri::AppHandle, at: overlay::Geometry) {
+    if let Some(old) = app.get_webview_window("overlay") {
+        old.destroy().ok();
+    }
+    // Floating, pinned above everything, click-through and undecorated are
+    // the desktop's decisions, so they are stated there before the window appears.
+    if hypr::available() && hypr::is_lua() {
+        let rule = format!(
+            r#"hl.window_rule({{ name = "trace-overlay", match = {{ title = "^Trace Overlay$" }}, float = true, pin = true, no_focus = true, no_initial_focus = true, no_blur = true, no_shadow = true, no_dim = true, no_anim = true, border_size = 0, rounding = 0, monitor = "{}", size = "{} {}", move = "{} {}" }})"#,
+            at.monitor, at.width, at.height, at.local_x, at.local_y
+        );
+        sys_util::run(std::process::Command::new("hyprctl").args(["eval", &rule])).ok();
+    }
+    let built = tauri::WebviewWindowBuilder::new(app, "overlay", tauri::WebviewUrl::App("index.html?overlay=1".into()))
+        .title("Trace Overlay")
+        .inner_size(at.width as f64, at.height as f64)
+        .position(at.x as f64, at.y as f64)
+        .transparent(true)
+        .decorations(false)
+        .shadow(false)
+        .resizable(false)
+        .focused(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .build();
+    *OVERLAY_AT.lock().unwrap() = built.is_ok().then_some(at);
+}
+
+/// `show`: Some(true) opens, Some(false) closes, None toggles.
+fn set_overlay(app: &tauri::AppHandle, show: Option<bool>) {
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        let open = handle.get_webview_window("overlay").is_some();
+        if show.unwrap_or(!open) {
+            if let Some(at) = overlay_target() {
+                place_overlay(&handle, at);
+            }
+        } else if let Some(window) = handle.get_webview_window("overlay") {
+            window.destroy().ok();
+            *OVERLAY_AT.lock().unwrap() = None;
+        }
+    })
+    .ok();
+}
+
+/// While the overlay is open, moves it when the right place for it changes:
+/// another monitor took the focus, a game started, a screen was unplugged.
+fn overlay_keeper(app: tauri::AppHandle) {
+    let mut wanted_twice: Option<overlay::Geometry> = None;
+    loop {
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        if app.get_webview_window("overlay").is_none() {
+            wanted_twice = None;
+            continue;
+        }
+        let Some(target) = overlay_target() else {
+            continue;
+        };
+        if OVERLAY_AT.lock().unwrap().as_ref() == Some(&target) {
+            wanted_twice = None;
+            continue;
+        }
+        // Only after two looks in a row agree, so a glance at the other screen doesn't make it jump.
+        if wanted_twice.as_ref() == Some(&target) {
+            let handle = app.clone();
+            app.run_on_main_thread(move || place_overlay(&handle, target)).ok();
+            wanted_twice = None;
+        } else {
+            wanted_twice = Some(target);
+        }
     }
 }
 
@@ -2428,6 +2597,12 @@ impl ksni::Tray for TraceTray {
             StandardItem {
                 label: "Show / hide Trace".into(),
                 activate: Box::new(|tray: &mut Self| toggle_main_window(&tray.app)),
+                ..Default::default()
+            }
+            .into(),
+            StandardItem {
+                label: "Stats overlay".into(),
+                activate: Box::new(|tray: &mut Self| set_overlay(&tray.app, None)),
                 ..Default::default()
             }
             .into(),
@@ -2969,12 +3144,10 @@ pub fn run() {
                 // Keep recording in the background; the tray icon (or
                 // launching Trace again) brings the window back.
                 if has_tray && automation::load().close_to_tray {
+                    // The window is destroyed rather than hidden, which gives
+                    // its web engine's memory back. Trace itself keeps running.
                     api.prevent_close();
-                    window.hide().ok();
-                    // Tell the page to stop refreshing: a hidden window that
-                    // keeps polling is most of what an idle Trace would cost.
-                    use tauri::Emitter;
-                    window.emit("trace-visible", false).ok();
+                    hide_main_window(window.app_handle());
                 }
             }
         })
@@ -3008,7 +3181,16 @@ pub fn run() {
             let args: Vec<String> = std::env::args().collect();
             if handle_cli(app.handle(), &args) && !start_hidden {
                 show_main_window(app.handle());
+            } else if start_hidden {
+                // Nothing to show yet, so don't keep a window (and its web engine) around.
+                hide_main_window(app.handle());
             }
+            if overlay::config().open_at_start {
+                set_overlay(app.handle(), Some(true));
+            }
+            overlay::prune_fps_logs();
+            let overlay_handle = app.handle().clone();
+            std::thread::spawn(move || overlay_keeper(overlay_handle));
             // Apps listed to sleep when unused are checked every second, so
             // one wakes the moment you click back into it.
             extras::recover_frozen();
@@ -3125,6 +3307,11 @@ pub fn run() {
             scan_folder_sizes,
             get_memory_breakdown,
             get_security_report,
+            take_pending_nav,
+            get_overlay,
+            save_overlay,
+            show_overlay,
+            get_overlay_data,
             apply_preset_by_id,
             get_screen_day,
             get_media_history,
@@ -3306,6 +3493,12 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
         .run(|app, event| {
+            // The last window closing is not a reason to quit while there is a tray to live in.
+            if let tauri::RunEvent::ExitRequested { code: None, api, .. } = &event {
+                if keeps_running_without_a_window(app) {
+                    api.prevent_exit();
+                }
+            }
             if let tauri::RunEvent::Exit = event {
                 tweaks::release_keep_awake();
                 // Never leave an app frozen behind.
