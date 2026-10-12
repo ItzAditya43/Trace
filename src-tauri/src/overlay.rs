@@ -102,19 +102,34 @@ pub struct Geometry {
 impl Geometry {
     /// Where the window itself must sit so that the numbers land at this
     /// place. `window_width`/`window_height` are what the desktop actually
-    /// gave the window, which can be more than was asked for (the toolkit
-    /// has a smallest window size). The numbers are anchored to a corner
-    /// inside the window, so the window is lined up by that corner.
+    /// gave the window, which can be more than was asked for: the toolkit
+    /// has a smallest window size, and sometimes adds an invisible border
+    /// all round. The numbers are anchored to a corner inside the window,
+    /// so the window is lined up by that corner.
     pub fn window_origin(&self, window_width: i32, window_height: i32) -> (i32, i32) {
+        let inset = Self::border(self.width, self.height, window_width, window_height);
         let x = if self.corner.ends_with("left") {
-            self.x
+            self.x - inset
         } else if self.corner.ends_with("center") {
             self.x + self.width / 2 - window_width / 2
         } else {
-            self.x + self.width - window_width
+            self.x + self.width + inset - window_width
         };
-        let y = if self.corner.starts_with("top") { self.y } else { self.y + self.height - window_height };
+        let y = if self.corner.starts_with("top") { self.y - inset } else { self.y + self.height + inset - window_height };
         (x, y)
+    }
+
+    /// The toolkit's invisible border, when it added one: exactly that much
+    /// extra on both sides in both directions, on top of its smallest size.
+    fn border(width: i32, height: i32, window_width: i32, window_height: i32) -> i32 {
+        const BORDER: i32 = 24;
+        const SMALLEST: i32 = 200;
+        let both = 2 * BORDER;
+        if window_width - width.max(SMALLEST.min(window_width - both)) == both && window_height - height.max(SMALLEST) == both {
+            BORDER
+        } else {
+            0
+        }
     }
 }
 
@@ -435,17 +450,25 @@ mod tests {
     #[test]
     fn a_window_larger_than_asked_is_lined_up_by_its_corner() {
         let screens = [screen("a", 0, 1920, 1080, true)];
-        // Asked for 188 x 137; the desktop made the window 200 x 200.
+        // Asked for 188 x 137; the desktop made the window 200 x 200, no border.
         let top_right = geometry(&Config::default(), &screens, false, false).unwrap();
+        assert_eq!((top_right.width, top_right.height), (188, 137));
         let (x, y) = top_right.window_origin(200, 200);
         assert_eq!((x + 200, y), (top_right.x + top_right.width, top_right.y), "right and top edges meet");
+        // The same window with the invisible 24-pixel border all round: 236 x 248.
+        let (x, y) = top_right.window_origin(236, 248);
+        assert_eq!((x + 236 - 24, y + 24), (top_right.x + top_right.width, top_right.y), "the edges inside the border meet");
         let bottom_left = geometry(&Config { corner: "bottom-left".into(), ..Default::default() }, &screens, false, false).unwrap();
         let (x, y) = bottom_left.window_origin(200, 200);
         assert_eq!((x, y + 200), (bottom_left.x, bottom_left.y + bottom_left.height), "left and bottom edges meet");
+        let (x, y) = bottom_left.window_origin(236, 248);
+        assert_eq!((x + 24, y + 248 - 24), (bottom_left.x, bottom_left.y + bottom_left.height));
         let centre = geometry(&Config { corner: "top-center".into(), ..Default::default() }, &screens, false, false).unwrap();
         assert_eq!(centre.window_origin(200, 200).0 + 100, centre.x + centre.width / 2);
-        // A window exactly as asked needs no correction.
-        assert_eq!(top_right.window_origin(top_right.width, top_right.height), (top_right.x, top_right.y));
+        // A wide strip: as asked, and with the border.
+        let strip = geometry(&Config { layout: "strip".into(), ..Default::default() }, &screens, true, true).unwrap();
+        assert_eq!(strip.window_origin(strip.width, 200), (strip.x, strip.y));
+        assert_eq!(strip.window_origin(strip.width + 48, 248), (strip.x - 24, strip.y - 24));
     }
 
     #[test]

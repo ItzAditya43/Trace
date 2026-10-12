@@ -2413,20 +2413,30 @@ fn window_opened(label: &str, before: Vec<u32>) {
     });
 }
 
-fn window_closed(label: &str) {
-    let Some(pids) = WEB_PROCESSES.lock().unwrap().get_or_insert_with(Default::default).remove(label) else {
-        return;
-    };
+fn window_closed(app: &tauri::AppHandle, label: &str) {
+    let pids = WEB_PROCESSES.lock().unwrap().get_or_insert_with(Default::default).remove(label).unwrap_or_default();
     WEB_ORPHANS.lock().unwrap().extend(&pids);
+    let app = app.clone();
     std::thread::spawn(move || {
         // Long enough for a window opened straight afterwards to claim it back.
         std::thread::sleep(std::time::Duration::from_secs(4));
-        let mut orphans = WEB_ORPHANS.lock().unwrap();
-        for pid in pids {
-            if orphans.contains(&pid) && web_processes().contains(&pid) {
+        {
+            let mut orphans = WEB_ORPHANS.lock().unwrap();
+            for pid in pids {
+                if orphans.contains(&pid) && web_processes().contains(&pid) {
+                    unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+                }
+                orphans.retain(|p| *p != pid);
+            }
+        }
+        // Opening and closing quickly can outrun the bookkeeping above. With
+        // no window left at all, no engine process has anything to draw.
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        if app.webview_windows().is_empty() {
+            for pid in web_processes() {
                 unsafe { libc::kill(pid as i32, libc::SIGTERM) };
             }
-            orphans.retain(|p| *p != pid);
+            WEB_ORPHANS.lock().unwrap().clear();
         }
     });
 }
@@ -3226,7 +3236,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
-                window_closed(window.label());
+                window_closed(window.app_handle(), window.label());
             }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 // Only the main window hides to the tray; the mini window
