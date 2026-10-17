@@ -8,7 +8,29 @@
 
 ## Installing
 
-**From a release.** Download the build for your system from the Releases page and install it the usual way for its format.
+**One command**, on any 64-bit (x86_64) distribution with glibc:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ItzAditya43/Trace/main/install.sh | sh
+```
+
+| Your system | What it does |
+|---|---|
+| Debian, Ubuntu, Mint, Pop!_OS… | installs the `.deb` with apt |
+| Fedora, RHEL, CentOS… | installs the `.rpm` with dnf |
+| Arch, Manjaro, EndeavourOS, CachyOS… | installs `webkit2gtk-4.1` and `gtk3` with pacman, and the program into `/usr/local` |
+| openSUSE | installs WebKitGTK and GTK with zypper, and the program into `/usr/local` |
+| anything else, or `--user` | unpacks the AppImage into `~/.local/share/trace-app`, with a `trace` command in `~/.local/bin` and an app-menu entry; no password needed |
+
+Options go after `sh -s --`, for example `… | sh -s -- --user`:
+
+- `--user`: home-folder install, whatever the distribution.
+- `--version 1.0.1`: a particular version instead of the latest.
+- `--uninstall`: remove Trace. Your history and settings in `~/.local/share/trace` are kept.
+
+Not covered: ARM machines, musl-based systems such as Alpine, and NixOS (use `appimage-run` with the AppImage there).
+
+**From a release by hand.** Download the build for your system from the Releases page and install it the usual way for its format.
 
 **From source.**
 

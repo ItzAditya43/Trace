@@ -28,14 +28,21 @@ Press **Ctrl+K** anywhere to search settings, pages, running programs, services 
 
 ## Install
 
-Download the latest build from [Releases](../../releases), or build it yourself:
+One command, on any 64-bit Linux distribution:
 
 ```bash
-npm install
-npm run tauri build
+curl -fsSL https://raw.githubusercontent.com/ItzAditya43/Trace/main/install.sh | sh
 ```
 
-See [Getting started](docs/getting-started.md) for requirements, the launcher entry and starting at login.
+It picks the right package for your system: the `.deb` on Debian, Ubuntu, Mint and relatives; the `.rpm` on Fedora and relatives; the system's own WebKitGTK and GTK plus the program in `/usr/local` on Arch, Manjaro, EndeavourOS, openSUSE and relatives. It asks for your password once. On anything else, or with `--user`, it unpacks the AppImage into your home folder without needing a password.
+
+Run the same command again to update. To remove Trace:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ItzAditya43/Trace/main/install.sh | sh -s -- --uninstall
+```
+
+Prefer to do it by hand? Every build is on the [Releases](../../releases) page. See [Getting started](docs/getting-started.md) for building from source, the launcher entry and starting at login.
 
 ## Documentation
 
