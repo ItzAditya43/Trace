@@ -7,7 +7,7 @@ use sysinfo::System;
 
 #[derive(Serialize, Clone)]
 pub struct Hit {
-    /// "page" | "setting" | "process" | "service" | "log"
+    /// "page" | "feature" | "setting" | "process" | "service" | "log"
     pub kind: String,
     pub title: String,
     pub detail: String,
@@ -16,6 +16,8 @@ pub struct Hit {
     pub section: Option<String>,
     /// Text to pre-fill in that page's own search or filter.
     pub query: Option<String>,
+    /// A card on that page to scroll to, by its title.
+    pub card: Option<String>,
 }
 
 const PAGES: &[(&str, &str, Option<&str>, &str)] = &[
@@ -36,6 +38,35 @@ const PAGES: &[(&str, &str, Option<&str>, &str)] = &[
     ("Control — Automation", "control", Some("automation"), "profiles rules schedules alerts tray start at login action log"),
     ("Control — Packages & Cleanup", "control", Some("packages"), "updates pacman orphans cache trash journal"),
 ];
+
+/// Service and timer names, read from the unit folders: asking systemctl
+/// takes seconds on some machines, which made every search feel dead.
+fn unit_names() -> Vec<String> {
+    use std::sync::Mutex;
+    static CACHE: Mutex<Option<(std::time::Instant, Vec<String>)>> = Mutex::new(None);
+    let mut cache = CACHE.lock().unwrap();
+    if let Some((at, names)) = cache.as_ref() {
+        if at.elapsed().as_secs() < 300 {
+            return names.clone();
+        }
+    }
+    let mut dirs = vec!["/etc/systemd/system".to_string(), "/usr/lib/systemd/system".to_string(), "/lib/systemd/system".to_string(), "/usr/lib/systemd/user".to_string()];
+    if let Some(config) = dirs::config_dir() {
+        dirs.push(config.join("systemd/user").to_string_lossy().to_string());
+    }
+    let mut names: Vec<String> = dirs
+        .iter()
+        .filter_map(|d| std::fs::read_dir(d).ok())
+        .flat_map(|entries| entries.flatten())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        // Templates ("getty@.service") aren't something to open.
+        .filter(|n| (n.ends_with(".service") || n.ends_with(".timer")) && !n.contains("@."))
+        .collect();
+    names.sort();
+    names.dedup();
+    *cache = Some((std::time::Instant::now(), names.clone()));
+    names
+}
 
 fn words_match(haystack: &str, needle_words: &[String]) -> bool {
     let haystack = haystack.to_lowercase();
@@ -58,8 +89,28 @@ pub fn search(db: &Db, sys: &System, query: &str) -> Vec<Hit> {
                 page: page.to_string(),
                 section: section.map(String::from),
                 query: None,
+                card: None,
             });
         }
+    }
+
+    // Cards inside pages: what the small features are called and what they do.
+    let mut cards: Vec<(bool, &(&str, &str, Option<&str>, &str))> = crate::search_index::CARDS
+        .iter()
+        .filter(|(title, page, section, keywords)| words_match(&format!("{title} {keywords} {}", crate::search_index::place(page, *section)), &words))
+        .map(|c| (words_match(c.0, &words), c))
+        .collect();
+    cards.sort_by_key(|(in_title, _)| !*in_title);
+    for (_, (title, page, section, _)) in cards.into_iter().take(8) {
+        hits.push(Hit {
+            kind: "feature".to_string(),
+            title: title.to_string(),
+            detail: crate::search_index::place(page, *section),
+            page: page.to_string(),
+            section: section.map(String::from),
+            query: None,
+            card: Some(title.to_string()),
+        });
     }
 
     // Settings: title matches rank above matches that are only in the help text.
@@ -77,6 +128,7 @@ pub fn search(db: &Db, sys: &System, query: &str) -> Vec<Hit> {
             page: "tweaks".to_string(),
             section: None,
             query: Some(t.title.to_string()),
+            card: None,
         });
     }
 
@@ -99,29 +151,21 @@ pub fn search(db: &Db, sys: &System, query: &str) -> Vec<Hit> {
             page: "control".to_string(),
             section: Some("apps".to_string()),
             query: Some(name.clone()),
+            card: None,
             title: name,
         });
     }
 
-    let units = crate::sys_util::run_lossy(std::process::Command::new("systemctl").args([
-        "list-unit-files", "--type=service,timer", "--no-legend", "--plain", "--no-pager",
-    ]));
-    for line in units.lines() {
-        let mut parts = line.split_whitespace();
-        let (Some(unit), Some(state)) = (parts.next(), parts.next()) else {
-            continue;
-        };
-        if unit.contains('@') && unit.ends_with("@.service") {
-            continue;
-        }
-        if words_match(unit, &words) {
+    for unit in unit_names() {
+        if words_match(&unit, &words) {
             hits.push(Hit {
                 kind: "service".to_string(),
-                title: unit.to_string(),
-                detail: state.to_string(),
+                detail: if unit.ends_with(".timer") { "timer".to_string() } else { "service".to_string() },
                 page: "control".to_string(),
                 section: Some("services".to_string()),
-                query: Some(unit.to_string()),
+                query: Some(unit.clone()),
+                card: None,
+                title: unit,
             });
         }
     }
@@ -153,6 +197,7 @@ pub fn search(db: &Db, sys: &System, query: &str) -> Vec<Hit> {
                 page: "logs".to_string(),
                 section: None,
                 query: None,
+                card: None,
             });
         }
     };
@@ -177,9 +222,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn small_features_are_found_by_what_they_do() {
+        let db = crate::db::Db { conn: std::sync::Mutex::new(rusqlite::Connection::open_in_memory().unwrap()) };
+        let sys = sysinfo::System::new();
+        let first_card = |q: &str| search(&db, &sys, q).into_iter().find(|h| h.kind == "feature").map(|h| h.title);
+        assert_eq!(first_card("equaliser").as_deref(), Some("Sound Per App"));
+        assert_eq!(first_card("wifi password").as_deref(), Some("Saved Wi-Fi Networks"));
+        assert_eq!(first_card("hdr").as_deref(), Some("Colour Per Monitor"));
+        assert_eq!(first_card("battery drain").as_deref(), Some("Battery Drain Per App"));
+        assert_eq!(first_card("fps").as_deref(), Some("Stats Overlay"));
+        assert_eq!(first_card("backup").as_deref(), Some("Backups"));
+        assert!(first_card("zzzz-nothing").is_none());
+        let started = std::time::Instant::now();
+        search(&db, &sys, "network");
+        assert!(started.elapsed().as_millis() < 500, "a search must answer while you type");
+    }
+
+    #[test]
     fn every_word_must_match() {
         let words = vec!["kill".to_string(), "switch".to_string()];
         assert!(words_match("Control — Network vpn kill switch", &words));
         assert!(!words_match("kill a process", &words));
     }
 }
+

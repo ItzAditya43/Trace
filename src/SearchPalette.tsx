@@ -3,22 +3,24 @@ import { invoke } from "@tauri-apps/api/core";
 import { NavContext } from "./nav";
 
 interface Hit {
-  kind: "page" | "setting" | "process" | "service" | "log";
+  kind: "page" | "feature" | "setting" | "process" | "service" | "log";
   title: string;
   detail: string;
   page: string;
   section: string | null;
   query: string | null;
+  card: string | null;
 }
 
 const KIND_LABEL: Record<Hit["kind"], string> = {
   page: "Pages",
+  feature: "Features",
   setting: "Settings",
   process: "Running programs",
   service: "Services",
   log: "From the logbook",
 };
-const KIND_ORDER: Hit["kind"][] = ["page", "setting", "process", "service", "log"];
+const KIND_ORDER: Hit["kind"][] = ["feature", "page", "setting", "process", "service", "log"];
 
 function detailText(hit: Hit): string {
   if (hit.kind !== "log") return hit.detail;
@@ -54,7 +56,7 @@ export default function SearchPalette({ onClose }: { onClose: () => void }) {
           setSelected(0);
         })
         .catch(() => !cancelled && setHits([]));
-    }, 160);
+    }, 120);
     return () => {
       cancelled = true;
       clearTimeout(id);
@@ -62,7 +64,7 @@ export default function SearchPalette({ onClose }: { onClose: () => void }) {
   }, [query]);
 
   function choose(hit: Hit) {
-    go({ page: hit.page, section: hit.section ?? undefined, query: hit.query ?? undefined });
+    go({ page: hit.page, section: hit.section ?? undefined, query: hit.query ?? undefined, card: hit.card ?? undefined });
     onClose();
   }
 
@@ -83,7 +85,7 @@ export default function SearchPalette({ onClose }: { onClose: () => void }) {
         <input
           ref={input}
           className="port-input palette-input"
-          placeholder="Search settings, pages, programs, services, logs…"
+          placeholder="Search features, settings, programs, services, logs…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={onKey}
@@ -91,7 +93,8 @@ export default function SearchPalette({ onClose }: { onClose: () => void }) {
         <div className="palette-results">
           {query.trim() === "" && (
             <p className="diagnose-hint">
-              Try "blur", "swap", "docker", "battery", "kill switch" or the name of a running program.
+              Try "fps", "wifi password", "equaliser", "backup", "battery drain", "kill switch", "blur" or the name of a
+              running program.
             </p>
           )}
           {query.trim() !== "" && hits.length === 0 && <p className="diagnose-hint">Nothing found.</p>}

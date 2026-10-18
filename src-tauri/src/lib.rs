@@ -22,6 +22,7 @@ mod memory_map;
 mod more;
 mod profiles;
 mod search;
+mod search_index;
 mod projects;
 mod namespace_control;
 mod network_control;
@@ -3748,6 +3749,10 @@ mod tests {
         );
         dump("list_timers", json(&extras::timers()));
         dump("get_ports", json(&hardware::ports()));
+        for q in ["equaliser", "wifi password", "fps"] {
+            let sys = state.sys.lock().unwrap();
+            dump(&format!("global_search_{}", q.replace(' ', "_")), json(&search::search(&state.db, &sys, q)));
+        }
         dump("get_action_log", json(&state.db.actions_since(chrono_now() - 7 * 86_400)));
         dump("get_app_info", serde_json::json!({ "version": env!("CARGO_PKG_VERSION"), "tray": true, "visible": true }));
         dump("get_autostart", json(&autostart::status()));

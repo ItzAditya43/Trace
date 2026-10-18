@@ -2840,3 +2840,19 @@ html.overlay-root #root {
   -webkit-text-stroke: calc(2.6px * var(--overlay-scale, 1)) rgba(0, 0, 0, 0.82);
   paint-order: stroke fill;
 }
+
+/* The card a search result pointed at. */
+.panel.card-flash {
+  animation: card-flash 1.8s ease-out;
+}
+
+@keyframes card-flash {
+  0%,
+  35% {
+    border-color: #4f7fe0;
+    box-shadow: 0 0 0 2px rgba(79, 127, 224, 0.45);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(79, 127, 224, 0);
+  }
+}

@@ -179,6 +179,26 @@ function App() {
     };
   }, [go]);
 
+  // A search result can point at one card: scroll to it once the page has drawn it.
+  useEffect(() => {
+    if (!target.card) return;
+    const want = target.card.toLowerCase();
+    let tries = 0;
+    const id = setInterval(() => {
+      const headings = [...document.querySelectorAll<HTMLElement>(".panel h2")];
+      const text = (h: HTMLElement) => (h.textContent ?? "").trim().toLowerCase();
+      const found = headings.find((h) => text(h) === want) ?? headings.find((h) => text(h).startsWith(want));
+      if (found || ++tries > 40) clearInterval(id);
+      const panel = found?.closest<HTMLElement>(".panel");
+      if (panel) {
+        panel.scrollIntoView({ behavior: "smooth", block: "start" });
+        panel.classList.add("card-flash");
+        setTimeout(() => panel.classList.remove("card-flash"), 1800);
+      }
+    }, 150);
+    return () => clearInterval(id);
+  }, [target]);
+
   // Ctrl+K (or /) opens search from anywhere.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {

@@ -7,6 +7,8 @@ export interface NavTarget {
   section?: string;
   /** Text to pre-fill in the page's own search or filter. */
   query?: string;
+  /** A card on the page to scroll to, by its title. */
+  card?: string;
   /** Changes on every navigation, so repeating the same jump still triggers. */
   nonce: number;
 }
