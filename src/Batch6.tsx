@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ActionResult, ConfirmButton, Segmented, Sparkline, StatusLine, formatClock, formatDay, useAction, usePoll } from "./ui";
+import { NtfySetting } from "./Batch7";
 
 interface ScreenDay {
   day_start: number;
@@ -131,6 +132,7 @@ export function VulnerablePackages() {
 
 interface Extras {
   phone_alerts: boolean;
+  ntfy_url: string;
   kbd_timeout_secs: number;
   weekly_digest: boolean;
   break_minutes: number;
@@ -215,6 +217,7 @@ export function Reminders({ apps }: { apps: string[] }) {
         {onOff(extras.phone_alerts, (on) => save({ phone_alerts: on }))}
       </div>
       <StatusLine result={test.result} />
+      <NtfySetting value={extras.ntfy_url ?? ""} onSave={(ntfy_url) => save({ ntfy_url })} />
 
       <h3 className="sub-heading">Daily time per app</h3>
       {extras.app_limits.map((l) => (
@@ -247,7 +250,7 @@ export function Reminders({ apps }: { apps: string[] }) {
           Add
         </button>
       </div>
-      <p className="diagnose-hint">These only tell you; nothing is closed or blocked. Phone alerts are the one thing here that leaves this machine.</p>
+      <p className="diagnose-hint">These only tell you; nothing is closed or blocked. Phone and ntfy alerts are the only things here that leave this machine.</p>
     </section>
   );
 }

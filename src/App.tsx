@@ -18,6 +18,7 @@ import { Tile, isWindowVisible, onWindowShown } from "./ui";
 import UpdateBanner from "./UpdateBanner";
 import "./App.css";
 import { CardChooser, CardPrefs, SetupCard, loadCardPrefs } from "./Batch6";
+import { WhatWorksHere } from "./Platform";
 
 const CARD_LABELS: Record<string, string> = { health: "System Health", cores: "Cores", gpus: "GPUs", temps: "Temperatures & Power", network: "Network", disks: "Disks", processes: "Top Processes (by memory)" };
 
@@ -575,6 +576,7 @@ function App() {
           </tbody>
         </table>
       </section>
+      <WhatWorksHere />
       <CardChooser prefs={cardPrefs} labels={CARD_LABELS} onChange={setCardPrefs} />
         </>
       )}

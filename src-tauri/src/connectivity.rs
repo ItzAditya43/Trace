@@ -14,6 +14,8 @@ fn action(result: Result<String, String>, success: impl Into<String>) -> ActionR
 
 #[derive(Serialize)]
 pub struct FirewallStatus {
+    /// "firewalld" | "ufw" | "none"
+    pub backend: String,
     pub available: bool,
     pub running: bool,
     /// False when the service is up but didn't answer the query in time.
@@ -34,6 +36,12 @@ fn firewall_cmd(args: &[&str]) -> Command {
 /// One `--list-all` call covers everything: `firewall-cmd` is a Python
 /// client that takes seconds to start, so separate queries would add up.
 pub fn firewall_status() -> FirewallStatus {
+    // Ubuntu and its relatives use ufw, whose rules only root may read: show
+    // whether it is on, and change ports through the password prompt.
+    if !has_tool("firewall-cmd") && has_tool("ufw") {
+        let running = run_lossy(Command::new("systemctl").args(["is-active", "ufw"])) == "active";
+        return FirewallStatus { backend: "ufw".into(), available: true, running, responded: true, zone: String::new(), services: Vec::new(), ports: Vec::new() };
+    }
     let available = has_tool("firewall-cmd");
     // Whether it is running comes from systemd, not from the query below:
     // a slow or stuck answer must not be reported as "firewall is off".
@@ -52,6 +60,7 @@ pub fn firewall_status() -> FirewallStatus {
             .unwrap_or_default()
     };
     FirewallStatus {
+        backend: if available { "firewalld".into() } else { "none".into() },
         available,
         running,
         responded: out.is_some(),
@@ -73,6 +82,11 @@ pub fn firewall_status() -> FirewallStatus {
 pub fn set_firewall_port(port: u16, protocol: &str, open: bool, permanent: bool) -> ActionResult {
     if !matches!(protocol, "tcp" | "udp") || port == 0 {
         return err("Port must be 1-65535 and protocol tcp or udp");
+    }
+    if !has_tool("firewall-cmd") && has_tool("ufw") {
+        let rule = format!("{port}/{protocol}");
+        let script = if open { format!("ufw allow {rule}") } else { format!("ufw delete allow {rule}") };
+        return crate::sys_util::privileged_action(&script, format!("{} {rule} (ufw keeps it after a reboot)", if open { "Opened" } else { "Closed" }));
     }
     let flag = format!("--{}-port={port}/{protocol}", if open { "add" } else { "remove" });
     let verb = if open { "Opened" } else { "Closed" };

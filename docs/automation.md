@@ -49,6 +49,7 @@ On the Hardware page: when the hottest sensor stays above a temperature for 30 s
 - A break suggestion after a chosen time at the screen.
 - A nudge once an app has been in front for a chosen time today.
 - Keyboard light off when idle, back at the next key press.
+- Every Trace alert also sent to an ntfy topic, so it reaches any phone or computer with the ntfy app.
 - An alert to a paired phone (KDE Connect) when a USB device is plugged in or a wrong password is entered while you are away.
 
 These only tell you; nothing is closed or blocked.

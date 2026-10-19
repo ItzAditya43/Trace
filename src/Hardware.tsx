@@ -12,6 +12,7 @@ import {
 } from "./ui";
 import { StressTest } from "./Batch3";
 import { MonitorColours, UsbPower } from "./Batch5";
+import { NeedsHyprland } from "./Platform";
 
 interface Sensor {
   chip: string;
@@ -736,8 +737,10 @@ export default function Hardware() {
           <p className="diagnose-hint">Battery levels of wireless mice, keyboards and headsets that report one.</p>
         </section>
       )}
-      <Displays />
-      <MonitorColours />
+      <NeedsHyprland>
+        <Displays />
+        <MonitorColours />
+      </NeedsHyprland>
     </>
   );
 }

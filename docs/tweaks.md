@@ -39,6 +39,10 @@ A short list worked out from this machine's own state, for example "you run zram
 
 Star any setting to put it on the Overview page as a one-click switch.
 
+## Put everything back
+
+Lists every setting whose value differs from what Trace first saw on this machine, and sets all of them back in one go, with one password prompt. They stop being kept after a restart too.
+
 ## Did that setting help?
 
 Take a measurement, change a setting, do the same thing on the machine again, and take another. Trace compares processor use, temperature, battery draw and time spent waiting on memory and disk.

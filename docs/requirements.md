@@ -1,6 +1,17 @@
 # Requirements
 
-Trace needs Linux, systemd and WebKitGTK 4.1. Everything else is optional: a feature whose tool is missing is hidden or tells you what to install.
+Trace needs Linux, systemd and WebKitGTK 4.1. Everything else is optional: a feature whose tool is missing is hidden or tells you what to install. The **What Works On This Machine** card at the bottom of the Overview lists exactly which features are available on your machine and what the rest need.
+
+## Desktops
+
+| Desktop | What works |
+|---|---|
+| Hyprland | everything |
+| KDE Plasma, GNOME, Xfce, Cinnamon, Sway, others | everything except window and workspace control, monitor arrangement and colour, and the click-through overlay (it opens as an ordinary window). Those cards are hidden. |
+
+Screen time per app and sleeping unused apps need to know which window is in front: built in on Hyprland and Sway, through `xprop` on any X11 session, through `kdotool` on KDE Wayland. GNOME on Wayland doesn't let other programs ask.
+
+## Tools
 
 | Feature | Uses |
 |---|---|
@@ -8,7 +19,7 @@ Trace needs Linux, systemd and WebKitGTK 4.1. Everything else is optional: a fea
 | Tray icon | a bar with StatusNotifierItem support |
 | Network, VPNs, Wi-Fi | NetworkManager (`nmcli`); OpenVPN or WireGuard plugins for those VPN types |
 | VPN kill switch, per-app routing | nftables, and the `nft_socket` kernel module |
-| Firewall section | firewalld |
+| Firewall section | firewalld or ufw |
 | Window, workspace, display and colour control | Hyprland; display arrangement and colour need its Lua configuration |
 | Stats overlay staying on top and click-through | Hyprland with its Lua configuration |
 | Frame rate in the overlay | MangoHud, added to the game's launch options |
@@ -16,7 +27,8 @@ Trace needs Linux, systemd and WebKitGTK 4.1. Everything else is optional: a fea
 | Sound per app, noise filter, equaliser | PipeWire with `pipewire-pulse` (`pactl`) |
 | Drive health and self-test | `smartctl` |
 | NVIDIA details | `nvidia-smi` |
-| Packages, update briefing | `pacman` with `pacman-contrib` (`checkupdates`, `paccache`), or `apt` for the basics |
+| Package updates, unneeded packages, cache cleanup | pacman (with `pacman-contrib`), apt, dnf or zypper |
+| Update briefing with distribution news | Arch-based system |
 | Vulnerable-package check | Arch-based system (`vercmp`) |
 | Containers | Docker |
 | Backups | `rsync` |

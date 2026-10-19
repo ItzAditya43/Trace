@@ -47,5 +47,6 @@ Nothing, unless you use one of these:
 | Vulnerable packages | The Arch security tracker's public list, when you press it. Nothing about your system is sent. |
 | Whose is it? | A name lookup and a registry lookup for that one address, when you press it. |
 | Phone alerts | Your own paired phone through KDE Connect. Off by default. |
+| ntfy alerts | The ntfy server and topic you enter, with each alert's title and text. Off until you set it. |
 
 There are no accounts, no telemetry and no AI features.

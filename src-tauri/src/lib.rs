@@ -5,6 +5,7 @@ mod batch3;
 mod batch4;
 mod batch5;
 mod batch6;
+mod batch7;
 mod connectivity;
 mod control_process;
 mod db;
@@ -27,6 +28,7 @@ mod projects;
 mod namespace_control;
 mod network_control;
 mod overlay;
+mod platform;
 mod packages;
 mod storage_explorer;
 mod sys_util;
@@ -2030,6 +2032,78 @@ fn apply_preset_by_id(state: tauri::State<AppState>, id: String) -> control_proc
 }
 
 #[tauri::command(async)]
+fn get_platform() -> platform::Platform {
+    platform::get()
+}
+
+#[tauri::command(async)]
+fn get_process_detail(pid: u32) -> Result<batch7::ProcessDetail, String> {
+    batch7::process_detail(pid)
+}
+
+#[tauri::command(async)]
+fn get_changed_settings(state: tauri::State<AppState>) -> Vec<batch7::ChangedSetting> {
+    batch7::changed_settings(&state.db)
+}
+
+#[tauri::command(async)]
+fn put_everything_back(state: tauri::State<AppState>) -> Vec<tweaks::ChangeResult> {
+    let results = batch7::put_everything_back(&state.db);
+    log_tweak_results(&state, "put everything back", &results);
+    results
+}
+
+#[tauri::command(async)]
+fn get_game_sessions(state: tauri::State<AppState>) -> Vec<batch7::GameSession> {
+    batch7::ingest_games(&state.db);
+    batch7::game_sessions(&state.db)
+}
+
+#[tauri::command(async)]
+fn test_ntfy(url: String) -> control_process::ActionResult {
+    batch7::test_ntfy(&url)
+}
+
+#[tauri::command(async)]
+fn export_health_report(state: tauri::State<AppState>) -> control_process::ActionResult {
+    let snap = take_snapshot(&state);
+    let slow = state.slow_health.lock().unwrap().clone();
+    let batteries = health::battery_health();
+    let wear = batteries.iter().map(|b| b.wear_percent).fold(0.0, f32::max);
+    let report = health::health_report(&health_inputs(&snap, &slow, wear));
+    let gb = |b: u64| format!("{:.1} GB", b as f64 / 1e9);
+    let mut rows = vec![
+        ("Processor".to_string(), format!("{} cores, load {:.1}", snap.per_core_usage.len(), snap.load_average.0)),
+        ("Memory".to_string(), format!("{} used of {}, {} available", gb(snap.used_memory_bytes), gb(snap.total_memory_bytes), gb(snap.available_memory_bytes))),
+        ("Swap".to_string(), format!("{} used of {}", gb(snap.used_swap_bytes), gb(snap.total_swap_bytes))),
+        ("Hottest sensor".to_string(), format!("{:.0}°C", snap.temperatures.iter().map(|t| t.celsius).fold(0.0, f32::max))),
+        ("Up for".to_string(), format!("{:.1} hours", snap.uptime_secs as f64 / 3600.0)),
+        ("Kernel".to_string(), health::reboot_status().running_kernel),
+    ];
+    for d in &snap.disks {
+        rows.push((format!("Disk {}", d.mount_point), format!("{} free of {}", gb(d.available_bytes), gb(d.total_bytes))));
+    }
+    for b in &batteries {
+        rows.push((format!("Battery {}", b.name), format!("{:.0}% charged, {:.0}% worn, {} cycles", b.percent, b.wear_percent, b.cycle_count.map(|c| c.to_string()).unwrap_or_else(|| "?".into()))));
+    }
+    for g in &snap.gpus {
+        rows.push(("Graphics".to_string(), g.name.clone()));
+    }
+    let parts = batch7::ReportParts {
+        score: report.score,
+        grade: report.grade.clone(),
+        issues: report.issues.iter().map(|i| (i.severity.clone(), i.title.clone(), i.detail.clone())).collect(),
+        rows,
+        failed: health::failed_units().into_iter().map(|u| format!("{} — {}", u.name, u.description)).collect(),
+        errors: health::recent_errors().into_iter().map(|l| format!("{} {}: {}", l.time, l.source, l.message)).collect(),
+    };
+    match batch7::write_report(&parts) {
+        Ok(path) => sys_util::ok(format!("Saved to {path}")),
+        Err(e) => sys_util::err(e),
+    }
+}
+
+#[tauri::command(async)]
 fn take_pending_nav() -> Option<(String, String)> {
     PENDING_NAV.lock().unwrap().take()
 }
@@ -2926,6 +3000,19 @@ fn get_recent_errors() -> Vec<health::LogLine> {
 #[tauri::command(async)]
 fn check_drive_health(state: tauri::State<AppState>) -> Result<Vec<health::DriveHealth>, String> {
     let health = health::drive_health()?;
+    // Worth a notification: a failing drive, or wear that moved since the last check.
+    let before = batch4::wear_history(&state.db);
+    for h in &health {
+        if h.passed == Some(false) {
+            sys_util::notify("A drive is failing its health check", &format!("{} reports a SMART failure. Back up what matters on it now.", h.device), true);
+        }
+        let last = before.iter().rev().find(|w| w.device == h.device).and_then(|w| w.wear_percent);
+        if let (Some(last), Some(now)) = (last, h.wear_percent) {
+            if now > last {
+                sys_util::notify("Drive wear went up", &format!("{} is now {now}% through its rated life (was {last}%).", h.device), false);
+            }
+        }
+    }
     batch4::record_wear(&state.db, chrono_now(), &health);
     Ok(health)
 }
@@ -3113,6 +3200,7 @@ fn background_tick(state: &AppState, snap: &Snapshot, tick: u64) {
         };
         logbook::ingest_crashes(&state.db, tick == 0);
         batch5::maintenance_reminder(now);
+        batch7::ingest_games(&state.db);
         batch5::backup_tick(now);
         // A weekly measurement of folder sizes, taken while on the charger.
         let last = batch4::last_folder_snapshot(&state.db);
@@ -3346,6 +3434,7 @@ pub fn run() {
                     more::init(&state.db);
                     batch4::init(&state.db);
                     batch6::init(&state.db);
+                    batch7::init(&state.db);
                     tweaks::reapply_session(&state.db);
                     state.db.prune_app_memory(chrono_now() - 14 * 86_400);
                     logbook::prune_raw(&state.db, chrono_now() - 90 * 86_400);
@@ -3431,6 +3520,13 @@ pub fn run() {
             get_memory_breakdown,
             get_security_report,
             take_pending_nav,
+            get_process_detail,
+            get_changed_settings,
+            put_everything_back,
+            get_game_sessions,
+            test_ntfy,
+            export_health_report,
+            get_platform,
             get_overlay,
             save_overlay,
             show_overlay,
@@ -3677,6 +3773,7 @@ mod tests {
         tweaks::init(&state.db);
         batch4::init(&state.db);
         batch6::init(&state.db);
+        batch7::init(&state.db);
         logbook::ingest_crashes(&state.db, false);
         logbook::ingest_power_events(&state.db, false);
         logbook::ingest_packages(&state.db);

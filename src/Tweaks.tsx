@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { NavContext } from "./nav";
 import { ConfirmButton, formatClock, formatDay, usePoll } from "./ui";
 import { MeasureEffect } from "./Batch4";
+import { PutEverythingBack } from "./Batch7";
 
 interface TweakState {
   id: string;
@@ -633,6 +634,7 @@ export default function Tweaks() {
 
       {browsing && <TrustedHelper />}
       {browsing && <MeasureEffect />}
+      {browsing && <PutEverythingBack />}
 
       {browsing && (
         <section className="panel wide">

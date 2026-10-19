@@ -230,7 +230,8 @@ mod tests {
         assert_eq!(first_card("wifi password").as_deref(), Some("Saved Wi-Fi Networks"));
         assert_eq!(first_card("hdr").as_deref(), Some("Colour Per Monitor"));
         assert_eq!(first_card("battery drain").as_deref(), Some("Battery Drain Per App"));
-        assert_eq!(first_card("fps").as_deref(), Some("Stats Overlay"));
+        let fps: Vec<String> = search(&db, &sys, "fps").into_iter().filter(|h| h.kind == "feature").map(|h| h.title).collect();
+        assert!(fps.contains(&"Stats Overlay".to_string()) && fps.contains(&"Games Played".to_string()), "{fps:?}");
         assert_eq!(first_card("backup").as_deref(), Some("Backups"));
         assert!(first_card("zzzz-nothing").is_none());
         let started = std::time::Instant::now();

@@ -10,7 +10,7 @@ The live state of the machine.
 - **Pinned switches**: any setting you starred on the Tweaks page.
 - Cards for cores, GPUs, temperatures, network, disks and top processes.
 
-At the bottom, **Choose and arrange these cards** hides cards and changes their order.
+At the bottom, **What Works On This Machine** says which of Trace's features this machine supports and what the rest need, and **Choose and arrange these cards** hides cards and changes their order.
 
 *Stall time* is the share of time programs were stuck waiting for the processor, memory or disk. It is the most direct measure of "the machine feels slow".
 
@@ -48,6 +48,7 @@ Two cards. **Drives Right Now** shows how busy each drive is. **Who Is Busy** li
 - **Battery Drain Per App**: watches for three seconds and splits the power draw between apps. It learns this machine's own idle draw from time spent on battery.
 - **What Grew On The Disk**: compares folder sizes between two measurements. One is taken each week while on the charger.
 - **Erase A Drive**: wipes an unused solid-state drive. The drive the system runs from is always refused.
+- **Share A Health Report**: saves one self-contained page with the score, issues, hardware, failed services and recent errors to your Downloads folder, for when you ask someone for help.
 - **Security Check-up**: firewall, programs listening on the network, SSH, disk encryption, Secure Boot, failed logins, and installed packages with known vulnerabilities. Fix buttons appear where Trace can fix something.
 - **Microphone & Camera**: who is using them now and a history of each use.
 - **Boot time**, failed services, out-of-memory kills and recent journal errors.
@@ -64,6 +65,7 @@ Pick a day, week, month or year.
 - Screen time per app, and apps that ran in the background.
 - **Screen Time, Hour By Hour**: what was in front of you during each hour. Time only counts while you are there: five minutes without touching anything stops the clock, unless sound is playing.
 - Crashes and out-of-memory kills, battery drain and cycles, data used per network, sleep and lid times, package changes, warnings, alerts Trace sent, and actions it took.
+- **Games Played**: each game session's length, average frame rate and 1% low, for games started with the frame-rate launch option.
 - **At The Machine, Last 7 Days**: USB devices plugged in, wrong passwords, the lid.
 
 Any period exports as JSON.

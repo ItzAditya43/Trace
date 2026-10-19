@@ -17,6 +17,8 @@ import { VpnControl } from "./ControlVpn";
 import { DisplayControl, FirewallControl, WirelessControl } from "./ControlConnect";
 import { Reminders, WifiSignal } from "./Batch6";
 import { OverlaySettings } from "./Overlay";
+import { NeedsHyprland } from "./Platform";
+import { ProcessDetails } from "./Batch7";
 
 interface ProcessInfo {
   pid: number;
@@ -1307,9 +1309,12 @@ export default function Control() {
         <>
           <ProcessControl />
           <ListeningPorts />
+          <ProcessDetails />
           <RunRestricted />
           <WhatIsWithApps />
-          <WindowControl />
+          <NeedsHyprland>
+            <WindowControl />
+          </NeedsHyprland>
           <NamespaceControl />
         </>
       )}
@@ -1341,7 +1346,9 @@ export default function Control() {
       )}
       {section === "devices" && (
         <>
-          <DisplayControl />
+          <NeedsHyprland>
+            <DisplayControl />
+          </NeedsHyprland>
           <AudioControl />
           <AppMixer />
           <OverlaySettings />

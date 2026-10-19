@@ -225,9 +225,7 @@ pub fn record_focus(db: &Db, ts: i64, secs: i64, app: &str) {
 /// The app owning the focused window (Hyprland), named the same way as on
 /// the Memory page so the two line up.
 pub fn focused_app() -> Option<String> {
-    let out = run_lossy(Command::new("hyprctl").args(["activewindow", "-j"]));
-    let json: serde_json::Value = serde_json::from_str(&out).ok()?;
-    let pid = json["pid"].as_u64()?;
+    let pid = crate::platform::focused_pid()?;
     crate::memory_map::app_name(&pid.to_string())
 }
 

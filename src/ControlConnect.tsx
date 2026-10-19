@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Segmented, StatusLine, useAction, usePoll } from "./ui";
 
 interface FirewallStatus {
+  backend: string;
   available: boolean;
   running: boolean;
   responded: boolean;
@@ -75,12 +76,12 @@ export function FirewallControl() {
       <h2>Firewall</h2>
       {!data.available ? (
         <p className="diagnose-hint">
-          firewalld isn't installed, so Trace can't manage inbound ports here.
+          No firewall (firewalld or ufw) is installed, so Trace can't manage inbound ports here.
         </p>
       ) : !data.running ? (
         <p className="status-fail">
           ! The firewall is installed but not running — every port is
-          reachable. Start it from Services (firewalld).
+          reachable. Start it from Services ({data.backend === "ufw" ? "ufw" : "firewalld"}).
         </p>
       ) : !data.responded ? (
         <>
@@ -96,10 +97,17 @@ export function FirewallControl() {
         </>
       ) : (
         <>
-          <p className="status-ok">
-            ✓ Running — zone "{data.zone}" blocks inbound connections except:
-          </p>
-          <div className="chip-row">
+          {data.backend === "ufw" ? (
+            <p className="status-ok">
+              ✓ ufw is on. Its rules can only be read by an administrator, so they aren't listed here; ports you open or
+              close below stay that way after a reboot.
+            </p>
+          ) : (
+            <p className="status-ok">
+              ✓ Running — zone "{data.zone}" blocks inbound connections except:
+            </p>
+          )}
+          {data.backend !== "ufw" && <div className="chip-row">
             {data.services.map((s) => (
               <span key={s} className="chip">
                 {s}
@@ -122,7 +130,7 @@ export function FirewallControl() {
             {data.services.length + data.ports.length === 0 && (
               <span className="mem-muted">nothing</span>
             )}
-          </div>
+          </div>}
           <div className="control-row">
             <label>Open or close a port</label>
             <input

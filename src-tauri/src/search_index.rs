@@ -15,6 +15,7 @@ pub const CARDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("Network", "live", None, "network speed download upload traffic interface"),
     ("Disks", "live", None, "disk space storage full free partitions"),
     ("Top Processes (by memory)", "live", None, "processes heaviest top apps ram usage"),
+    ("What Works On This Machine", "live", None, "compatibility supported features missing install requirements distro desktop"),
     ("Cards On This Page", "live", None, "customise customize arrange reorder hide cards overview layout"),
     // Memory
     ("Quick Rescue", "memory", None, "rescue panic freeze quit heavy apps out of memory crawling"),
@@ -51,6 +52,7 @@ pub const CARDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("Boot Time", "health", None, "boot time startup slow"),
     ("Drives", "health", None, "smart drive health ssd wear self-test nvme"),
     ("Out-of-Memory Kills", "health", None, "oom killed out of memory"),
+    ("Share A Health Report", "health", None, "report export share help html send"),
     ("Recent Errors", "health", None, "errors journal log problems"),
     // History
     ("CPU", "history", None, "cpu history chart graph"),
@@ -67,6 +69,7 @@ pub const CARDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("Time Recorded", "logs", None, "uptime hours on time recorded"),
     ("Crashes", "logs", None, "crashes per day chart"),
     ("Peak Temperature", "logs", None, "hottest temperature peak day"),
+    ("Games Played", "logs", None, "games fps frame rate history stutter 1% low"),
     ("Apps You Used", "logs", None, "screen time usage apps focus hours"),
     ("Also Running", "logs", None, "background apps running"),
     ("Crash Log", "logs", None, "crashes crashed core dump"),
@@ -88,8 +91,10 @@ pub const CARDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("Trusted Helper", "tweaks", None, "helper no password root unattended"),
     ("Did That Setting Help?", "tweaks", None, "measure before after compare effect benchmark"),
     ("Presets", "tweaks", None, "preset gaming battery saver performance quiet developer hardening"),
+    ("Put Everything Back", "tweaks", None, "undo all reset everything revert restore original defaults"),
     ("Recent Changes", "tweaks", None, "undo changes history revert"),
     // Control — Apps & Processes
+    ("Process Details", "control", Some("apps"), "process detail open files connections environment parent why running pid tree threads"),
     ("Processes", "control", Some("apps"), "kill freeze resume priority nice affinity io class cpu limit memory limit tell me when done"),
     ("Listening Ports", "control", Some("apps"), "ports listening dev server stop open to network"),
     ("Run With Restrictions", "control", Some("apps"), "sandbox no network read only untrusted run restricted"),
@@ -136,7 +141,7 @@ pub const CARDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("Build a Profile", "control", Some("automation"), "build profile steps run command hook script"),
     ("Game Mode", "control", Some("automation"), "game mode gaming steam preset per game"),
     ("Allowance For A Group Of Apps", "control", Some("automation"), "group budget allowance browsers memory cpu cap"),
-    ("Reminders & Small Things", "control", Some("automation"), "weekly digest break reminder app time limit keyboard backlight light timeout phone alert kde connect"),
+    ("Reminders & Small Things", "control", Some("automation"), "weekly digest break reminder app time limit keyboard backlight light timeout phone alert kde connect ntfy notifications phone"),
     ("Trace Itself", "control", Some("automation"), "tray start at login autostart mini monitor settings export import move to another machine"),
     ("Action Log", "control", Some("automation"), "action log audit what trace did"),
     // Control — Packages & Cleanup

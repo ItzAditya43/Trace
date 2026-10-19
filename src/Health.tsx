@@ -5,6 +5,7 @@ import { BatteryCareCard } from "./More";
 import { MediaUseCard, SecurityCheckup } from "./Batch3";
 import { DiskGrowth, DriveWear, PowerPerApp } from "./Batch4";
 import { SecureErase } from "./Batch6";
+import { ShareReport } from "./Batch7";
 
 interface Issue {
   severity: "critical" | "warn" | "info";
@@ -341,6 +342,7 @@ export default function Health() {
       <PowerPerApp />
       <DiskGrowth />
       <SecureErase />
+      <ShareReport />
       <SecurityCheckup />
       <MediaUseCard />
 

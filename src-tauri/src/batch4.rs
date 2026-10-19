@@ -191,11 +191,7 @@ const AWAY_AFTER_SECS: i64 = 300;
 /// five minutes and nothing is playing sound — so a window left focused
 /// overnight stops counting as use.
 pub fn user_present(now: i64) -> bool {
-    let keyboard = fs::read_to_string("/proc/interrupts")
-        .ok()
-        .and_then(|t| t.lines().find(|l| l.contains("i8042")).map(|l| l.split_whitespace().take(17).collect::<Vec<_>>().join(" ")))
-        .unwrap_or_default();
-    let signature = format!("{}|{keyboard}", run_lossy(Command::new("hyprctl").arg("cursorpos")));
+    let signature = format!("{}|{}", crate::platform::pointer_position(), crate::platform::input_interrupts());
     let mut idle = IDLE.lock().unwrap();
     if idle.signature != signature || idle.last_active == 0 {
         idle.signature = signature;

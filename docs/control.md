@@ -7,6 +7,7 @@ The Control page is split into sections.
 - **Processes**: search, freeze, resume, kill, change priority, limit CPU and memory. *Tell me when it's done* sends a notification when a chosen process finishes.
 - **Listening Ports**: every listening port, the program behind it and the folder it was started in, whether other machines can reach it, and a stop button.
 - **Run With Restrictions**: start a program with no network, unable to change any file, or with a memory or CPU cap. For tools you do not fully trust.
+- **Process Details**: one process's command, folder, user, threads and memory; the chain of processes that started it ("why is this running"); what it has started; its open files, network connections and environment (values that look like secrets are hidden).
 - **What Is This?**: a plain explanation of a process or service name and whether it is safe to stop. Unknown names fall back to the description of the package that installed them.
 - **Windows** and workspaces, and namespaces.
 

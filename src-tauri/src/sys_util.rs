@@ -115,6 +115,10 @@ pub fn notify(title: &str, body: &str, critical: bool) {
         body: body.to_string(),
         critical,
     });
+    let ntfy = crate::batch6::extras().ntfy_url;
+    if !ntfy.is_empty() {
+        crate::batch7::send_ntfy(&ntfy, title, body, critical);
+    }
     Command::new("notify-send")
         .args([
             "--app-name=Trace",

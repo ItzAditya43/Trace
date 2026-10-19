@@ -39,6 +39,8 @@ pub struct AppLimit {
 pub struct Extras {
     /// Send "someone is at your machine" alerts to a paired phone (KDE Connect).
     pub phone_alerts: bool,
+    /// An ntfy topic address that Trace's alerts are also sent to ("" = off).
+    pub ntfy_url: String,
     /// Switch the keyboard light off after this many idle seconds (0 = never).
     pub kbd_timeout_secs: u32,
     /// A Monday-morning summary of last week.
