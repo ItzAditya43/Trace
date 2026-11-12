@@ -642,8 +642,10 @@ mod tests {
     /// the kernel sees the limit, and removes it again. No root involved.
     #[test]
     fn app_limits_reach_the_kernel_through_systemd() {
-        // Needs a desktop session's own systemd manager; build machines have none.
-        if !std::process::Command::new("systemctl").args(["--user", "is-system-running"]).output().is_ok_and(|o| !o.stdout.is_empty() && !String::from_utf8_lossy(&o.stdout).contains("offline")) {
+        // Needs a session whose systemd manager may set processor limits; build machines often can't.
+        let uid = unsafe { libc::getuid() };
+        let controllers = std::fs::read_to_string(format!("/sys/fs/cgroup/user.slice/user-{uid}.slice/user@{uid}.service/cgroup.controllers")).unwrap_or_default();
+        if !controllers.split_whitespace().any(|c| c == "cpu") {
             return;
         }
         let name = format!("trace-test-limited-{}", std::process::id());
