@@ -26,21 +26,21 @@ fn now() -> i64 {
 
 mod user_live {
     use super::*;
-    use crate::{batch3, batch5, batch6};
+    use crate::{actions, care, habits};
 
     #[test]
     #[ignore]
     fn privacy_cleaner_clears_for_real_and_the_originals_are_put_back() {
         let scratch = std::env::temp_dir().join("trace-privacy-backup");
         fs::create_dir_all(&scratch).unwrap();
-        let items = batch3::privacy_items();
+        let items = care::privacy_items();
         println!("found: {:?}", items.iter().map(|i| (&i.id, i.bytes)).collect::<Vec<_>>());
 
         // Recent files list.
         let recent = dirs::data_local_dir().unwrap().join("recently-used.xbel");
         if recent.exists() {
             fs::copy(&recent, scratch.join("recent")).unwrap();
-            let r = batch3::privacy_clean("recent");
+            let r = care::privacy_clean("recent");
             assert!(r.ok, "{}", r.message);
             assert_eq!(fs::metadata(&recent).unwrap().len(), 0);
             fs::copy(scratch.join("recent"), &recent).unwrap();
@@ -52,7 +52,7 @@ mod user_live {
         if db.exists() && crate::sys_util::has_tool("cliphist") {
             let before = run_lossy(Command::new("cliphist").arg("list")).lines().count();
             fs::copy(&db, scratch.join("cliphist-db")).unwrap();
-            let r = batch3::privacy_clean("clipboard");
+            let r = care::privacy_clean("clipboard");
             assert!(r.ok, "{}", r.message);
             assert_eq!(run_lossy(Command::new("cliphist").arg("list")).lines().count(), 0);
             fs::copy(scratch.join("cliphist-db"), &db).unwrap();
@@ -64,11 +64,11 @@ mod user_live {
         // A browser cache: the smallest one, which is only ever a cache.
         if let Some(item) = items.iter().filter(|i| i.id.starts_with("browser:")).min_by_key(|i| i.bytes) {
             let dir = dirs::cache_dir().unwrap().join(item.id.trim_start_matches("browser:"));
-            let r = batch3::privacy_clean(&item.id);
+            let r = care::privacy_clean(&item.id);
             println!("{}: {}", item.title, r.message);
             assert!(r.ok && !dir.exists());
         }
-        assert!(!batch3::privacy_clean("browser:../../Documents").ok, "only known browser folders");
+        assert!(!care::privacy_clean("browser:../../Documents").ok, "only known browser folders");
         fs::remove_dir_all(scratch).ok();
     }
 
@@ -84,33 +84,33 @@ mod user_live {
             ids.sort();
             ids
         };
-        assert!(batch5::running_game().is_none(), "a real game is running; not interfering");
+        assert!(actions::running_game().is_none(), "a real game is running; not interfering");
         // A session left over from an interrupted run is finished off first.
-        if let Some((_, line)) = batch5::game_tick(&db) {
+        if let Some((_, line)) = actions::game_tick(&db) {
             println!("leftover: {line}");
         }
-        let saved_mode = batch5::game_mode();
+        let saved_mode = actions::game_mode();
         let before = values(&db);
 
-        batch5::set_game_mode(&batch5::GameMode { enabled: true, preset: "gaming".into(), per_game: Default::default(), seen: saved_mode.seen.clone() });
+        actions::set_game_mode(&actions::GameMode { enabled: true, preset: "gaming".into(), per_game: Default::default(), seen: saved_mode.seen.clone() });
         let mut game = Command::new("sleep").arg0("/tmp/steamapps/common/TraceTestGame/game").arg("120").spawn().unwrap();
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             std::thread::sleep(std::time::Duration::from_millis(300));
-            assert_eq!(batch5::running_game().as_deref(), Some("TraceTestGame"));
-            let started = batch5::game_tick(&db).expect("the game is noticed");
+            assert_eq!(actions::running_game().as_deref(), Some("TraceTestGame"));
+            let started = actions::game_tick(&db).expect("the game is noticed");
             println!("start: {}", started.1);
             let changed = differing(&before, &values(&db));
             println!("changed while playing: {changed:?}");
             assert!(!changed.is_empty(), "the preset changed something");
-            assert!(batch5::game_tick(&db).is_none(), "nothing more to do while it runs");
+            assert!(actions::game_tick(&db).is_none(), "nothing more to do while it runs");
         }));
         game.kill().ok();
         game.wait().ok();
         std::thread::sleep(std::time::Duration::from_millis(300));
-        let ended = batch5::game_tick(&db);
+        let ended = actions::game_tick(&db);
         let mut restored = saved_mode;
         restored.seen.retain(|g| g != "TraceTestGame");
-        batch5::set_game_mode(&restored);
+        actions::set_game_mode(&restored);
         outcome.unwrap();
         println!("end: {}", ended.expect("the game ending is noticed").1);
         let left = differing(&before, &values(&db));
@@ -120,15 +120,15 @@ mod user_live {
     #[test]
     #[ignore]
     fn wide_colour_and_hdr_switch_on_and_reset() {
-        for monitor in batch5::monitor_colours() {
+        for monitor in actions::monitor_colours() {
             for mode in ["wide", "hdr"] {
-                let r = batch5::set_monitor_colour(&monitor.name, mode, 1.0, 1.0, "");
+                let r = actions::set_monitor_colour(&monitor.name, mode, 1.0, 1.0, "");
                 std::thread::sleep(std::time::Duration::from_secs(2));
-                let now = batch5::monitor_colours().into_iter().find(|m| m.name == monitor.name).unwrap();
+                let now = actions::monitor_colours().into_iter().find(|m| m.name == monitor.name).unwrap();
                 println!("{} -> {mode}: accepted={} reports mode={} ten_bit={}", monitor.name, r.ok, now.mode, now.ten_bit);
-                let reset = batch5::set_monitor_colour(&monitor.name, "srgb", 1.0, 1.0, "");
+                let reset = actions::set_monitor_colour(&monitor.name, "srgb", 1.0, 1.0, "");
                 std::thread::sleep(std::time::Duration::from_secs(2));
-                let back = batch5::monitor_colours().into_iter().find(|m| m.name == monitor.name).unwrap();
+                let back = actions::monitor_colours().into_iter().find(|m| m.name == monitor.name).unwrap();
                 assert!(reset.ok && back.mode == "srgb", "{} did not reset: {}", monitor.name, back.mode);
             }
             let layout = crate::hardware::monitors();
@@ -139,7 +139,7 @@ mod user_live {
     #[test]
     #[ignore]
     fn cooling_test_runs_and_reports() {
-        let r = batch3::stress_test(30);
+        let r = care::stress_test(30);
         println!("{}s: {:.0}°C -> peak {:.0}°C, lowest speed {:.0}%, fan up to {} RPM", r.seconds, r.start_c, r.peak_c, r.lowest_speed_percent, r.peak_fan_rpm);
         println!("verdict: {}", r.verdict);
         assert!(r.peak_c >= r.start_c && r.peak_c > 30.0 && !r.verdict.is_empty());
@@ -148,9 +148,9 @@ mod user_live {
     #[test]
     #[ignore]
     fn phone_alert_says_so_when_no_phone_is_reachable() {
-        let phones = batch6::phones();
+        let phones = habits::phones();
         println!("paired and reachable phones: {}", phones.len());
-        let sent = batch6::send_to_phones("Trace: test alert");
+        let sent = habits::send_to_phones("Trace: test alert");
         assert_eq!(sent, phones.len());
     }
 
@@ -211,7 +211,7 @@ mod user_live {
 
 mod root_live {
     use super::*;
-    use crate::{batch5, batch6};
+    use crate::{actions, habits};
 
     fn require_root() {
         assert_eq!(unsafe { libc::geteuid() }, 0, "run this test binary as root (see the top of this file)");
@@ -221,24 +221,24 @@ mod root_live {
     #[ignore]
     fn a_maintenance_runs_by_hand_and_as_a_weekly_job() {
         require_root();
-        let report = batch5::maintenance_run(now()).expect("maintenance runs");
+        let report = actions::maintenance_run(now()).expect("maintenance runs");
         for line in &report {
             println!("by hand: {line}");
         }
         assert!(report.iter().any(|l| l.starts_with("Drives trimmed")) && report.iter().any(|l| l.starts_with("System log")));
 
-        let was_on = batch6::auto_maintenance().enabled;
-        let on = batch6::set_auto_maintenance(true);
+        let was_on = habits::auto_maintenance().enabled;
+        let on = habits::set_auto_maintenance(true);
         assert!(on.ok, "{}", on.message);
-        assert!(batch6::auto_maintenance().enabled);
+        assert!(habits::auto_maintenance().enabled);
         run(Command::new("systemctl").args(["start", "trace-maintenance.service"])).expect("the job runs");
-        let auto = batch6::auto_maintenance();
+        let auto = habits::auto_maintenance();
         println!("weekly job: {:?}", auto.last_lines);
         assert!(auto.last_lines.len() >= 3, "the job wrote its report");
         println!("next run: {}", run_lossy(Command::new("systemctl").args(["show", "trace-maintenance.timer", "-p", "NextElapseUSecRealtime", "--value"])));
         if !was_on {
-            assert!(batch6::set_auto_maintenance(false).ok);
-            assert!(!batch6::auto_maintenance().enabled);
+            assert!(habits::set_auto_maintenance(false).ok);
+            assert!(!habits::auto_maintenance().enabled);
             assert!(!std::path::Path::new("/etc/trace/maintenance.sh").exists());
         }
     }
@@ -259,14 +259,14 @@ mod root_live {
         let (wake0, control0) = (wake(), control());
         println!("{} ({}): wake={wake0} power={control0}", device.name, device.port);
 
-        assert!(batch5::set_usb_power(&device.port, "wake", wake0 != "enabled").ok);
+        assert!(actions::set_usb_power(&device.port, "wake", wake0 != "enabled").ok);
         assert_ne!(wake(), wake0);
-        assert!(batch5::set_usb_power(&device.port, "wake", wake0 == "enabled").ok);
+        assert!(actions::set_usb_power(&device.port, "wake", wake0 == "enabled").ok);
         assert_eq!(wake(), wake0);
 
-        assert!(batch5::set_usb_power(&device.port, "saving", control0 != "auto").ok);
+        assert!(actions::set_usb_power(&device.port, "saving", control0 != "auto").ok);
         assert_ne!(control(), control0);
-        assert!(batch5::set_usb_power(&device.port, "saving", control0 == "auto").ok);
+        assert!(actions::set_usb_power(&device.port, "saving", control0 == "auto").ok);
         assert_eq!(control(), control0);
         println!("both switches changed the device and were put back");
     }
@@ -291,14 +291,14 @@ mod root_live {
             let before = read();
             assert!(before > 1_000_000, "the drive holds data before");
 
-            let drives = batch6::erasable_drives();
+            let drives = habits::erasable_drives();
             let test_drive = drives.iter().find(|d| d.name == name).expect("listed");
             assert!(test_drive.blocked.is_empty(), "{}", test_drive.blocked);
             let system = drives.iter().find(|d| d.blocked.contains("mounted")).expect("the system drive is listed as blocked");
-            assert!(!batch6::secure_erase(&system.name, &system.name).ok, "the system drive must be refused");
-            assert!(!batch6::secure_erase(&name, "wrong").ok, "the name must be typed");
+            assert!(!habits::secure_erase(&system.name, &system.name).ok, "the system drive must be refused");
+            assert!(!habits::secure_erase(&name, "wrong").ok, "the name must be typed");
 
-            let erased = batch6::secure_erase(&name, &name);
+            let erased = habits::secure_erase(&name, &name);
             println!("{}", erased.message);
             assert!(erased.ok);
             let after = read();
@@ -370,7 +370,7 @@ mod root_live {
             return;
         }
         let was_active = run_lossy(Command::new("systemctl").args(["is-active", "firewalld"])) == "active";
-        let r = batch6::security_fix("firewall_on");
+        let r = habits::security_fix("firewall_on");
         println!("{}", r.message);
         assert!(r.ok);
         assert_eq!(run_lossy(Command::new("systemctl").args(["is-active", "firewalld"])), "active");

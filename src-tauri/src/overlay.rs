@@ -209,7 +209,7 @@ pub fn screens() -> Vec<Screen> {
         .filter(|c| c["mapped"].as_bool().unwrap_or(false))
         .filter(|c| {
             let pid = c["pid"].as_i64().unwrap_or(0);
-            fs::read_to_string(format!("/proc/{pid}/cmdline")).is_ok_and(|cmdline| crate::batch5::game_from_cmdline(&cmdline).is_some())
+            fs::read_to_string(format!("/proc/{pid}/cmdline")).is_ok_and(|cmdline| crate::actions::game_from_cmdline(&cmdline).is_some())
         })
         .filter_map(|c| c["monitor"].as_i64())
         .collect();
@@ -386,14 +386,14 @@ pub fn sample() -> Data {
 
     // Looking for a game means reading every process's command line, so do it less often.
     if prev.game_checked == 0 {
-        prev.game = crate::batch5::running_game();
+        prev.game = crate::actions::running_game();
     }
     prev.game_checked = (prev.game_checked + 1) % 5;
 
     let meminfo = fs::read_to_string("/proc/meminfo").unwrap_or_default();
     let kb = |key: &str| meminfo.lines().find(|l| l.starts_with(key)).and_then(|l| l.split_whitespace().nth(1)).and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0);
     let (total, available) = (kb("MemTotal:"), kb("MemAvailable:"));
-    let battery = crate::batch4::battery_now();
+    let battery = crate::insight::battery_now();
     let fps = fps_now();
 
     prev.cpu = cpu;

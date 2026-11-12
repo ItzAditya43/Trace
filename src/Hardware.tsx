@@ -10,8 +10,8 @@ import {
   useAction,
   usePoll,
 } from "./ui";
-import { StressTest } from "./Batch3";
-import { MonitorColours, UsbPower } from "./Batch5";
+import { StressTest } from "./Care";
+import { MonitorColours, UsbPower } from "./Actions";
 import { NeedsHyprland } from "./Platform";
 
 interface Sensor {

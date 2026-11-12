@@ -4,9 +4,9 @@ import { NavContext } from "./nav";
 import AppSettings from "./AppSettings";
 import { ScheduledJobs, TimersControl } from "./Quick";
 import { ConnectionDoctor, DataBudgets, ListeningPorts } from "./More";
-import { PrivacyCleaner, RunRestricted, SavedWifiCard } from "./Batch3";
-import { Connections, SpeedHistory, WhatIs, WifiChannels } from "./Batch4";
-import { AppMixer, Backups, FileFinder, GameModeCard, GroupBudgets, Maintenance, UpdateAssistant } from "./Batch5";
+import { PrivacyCleaner, RunRestricted, SavedWifiCard } from "./Care";
+import { Connections, SpeedHistory, WhatIs, WifiChannels } from "./Insight";
+import { AppMixer, Backups, FileFinder, GameModeCard, GroupBudgets, Maintenance, UpdateAssistant } from "./Actions";
 import { invoke } from "@tauri-apps/api/core";
 import { usePoll } from "./ui";
 import Automation from "./Automation";
@@ -15,10 +15,10 @@ import { CpuPowerControl, FanControl, MemoryTuningControl } from "./ControlTunin
 import { AudioControl, CleanupControl, SessionControl } from "./ControlDesktop";
 import { VpnControl } from "./ControlVpn";
 import { DisplayControl, FirewallControl, WirelessControl } from "./ControlConnect";
-import { Reminders, WifiSignal } from "./Batch6";
+import { Reminders, WifiSignal } from "./Habits";
 import { OverlaySettings } from "./Overlay";
-import { NeedsHyprland } from "./Platform";
-import { ProcessDetails } from "./Batch7";
+import { ArchOnly, NeedsHyprland } from "./Platform";
+import { ProcessDetails } from "./Reports";
 
 interface ProcessInfo {
   pid: number;
@@ -1379,7 +1379,9 @@ export default function Control() {
       {section === "packages" && (
         <>
           <Packages />
-          <UpdateAssistant />
+          <ArchOnly>
+            <UpdateAssistant />
+          </ArchOnly>
           <Maintenance />
           <CleanupControl />
           <PrivacyCleaner />

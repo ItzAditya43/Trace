@@ -584,7 +584,7 @@ pub fn host_name(ip: &str) -> String {
         return String::new();
     }
     let name = run_lossy(Command::new("timeout").args(["3", "getent", "hosts", ip])).split_whitespace().nth(1).unwrap_or("").to_string();
-    let country = crate::batch6::host_country(ip);
+    let country = crate::habits::host_country(ip);
     match (name.is_empty(), country.is_empty()) {
         (false, false) => format!("{name} · {country}"),
         (false, true) => name,

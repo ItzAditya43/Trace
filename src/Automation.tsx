@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Segmented, usePoll } from "./ui";
-import { FocusMode } from "./Batch3";
+import { FocusMode } from "./Care";
 
 interface Rule {
   id: string;

@@ -2,10 +2,10 @@ import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Sparkline, bytesToHuman, formatDay, usePoll } from "./ui";
 import { BatteryCareCard } from "./More";
-import { MediaUseCard, SecurityCheckup } from "./Batch3";
-import { DiskGrowth, DriveWear, PowerPerApp } from "./Batch4";
-import { SecureErase } from "./Batch6";
-import { ShareReport } from "./Batch7";
+import { MediaUseCard, SecurityCheckup } from "./Care";
+import { DiskGrowth, DriveWear, PowerPerApp } from "./Insight";
+import { SecureErase } from "./Habits";
+import { ShareReport } from "./Reports";
 
 interface Issue {
   severity: "critical" | "warn" | "info";

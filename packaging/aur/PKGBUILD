@@ -1,0 +1,29 @@
+# Maintainer: ItzAditya43
+pkgname=trace-monitor-bin
+_pkgname=trace
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="Machine observatory and control centre for Linux: live monitoring, history, tweaks, overlay and more"
+arch=('x86_64')
+url="https://github.com/ItzAditya43/Trace"
+license=('GPL-3.0-or-later')
+depends=('webkit2gtk-4.1' 'gtk3')
+optdepends=(
+  'networkmanager: Wi-Fi, VPN and network features'
+  'pipewire-pulse: per-app volume, equaliser and microphone filter'
+  'smartmontools: drive health'
+  'ddcutil: external monitor brightness'
+  'mangohud: frame rate in games'
+  'pacman-contrib: update checks and package cache cleanup'
+  'rsync: backups'
+  'bubblewrap: running programs without file access'
+  'qrencode: Wi-Fi QR codes'
+)
+provides=("$_pkgname")
+conflicts=("$_pkgname")
+source=("https://github.com/ItzAditya43/Trace/releases/download/v$pkgver/${_pkgname}_${pkgver}_amd64.deb")
+sha256sums=('7a491d36d90fb480fe39a4b8c07ff0093a5757a04ed552a0926e292ef058f5d1')
+
+package() {
+  bsdtar -xf data.tar.* -C "$pkgdir"
+}

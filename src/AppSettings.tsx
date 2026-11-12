@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { SettingsTransfer } from "./Batch3";
+import { SettingsTransfer } from "./Care";
 import { Segmented, StatusLine, formatClock, formatDay, useAction, usePoll } from "./ui";
 
 interface Config {

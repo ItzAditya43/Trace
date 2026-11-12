@@ -952,7 +952,7 @@ static CPU_PREV: Mutex<Option<(std::time::Instant, HashMap<String, u64>)>> = Mut
 /// Processor use per app since the last call, in percent of one core.
 /// Empty on the first call (there is nothing to compare with yet).
 pub fn app_cpu() -> HashMap<String, f64> {
-    let (ticks, _) = crate::batch4::cpu_ticks_by_app();
+    let (ticks, _) = crate::insight::cpu_ticks_by_app();
     let now = std::time::Instant::now();
     let mut prev = CPU_PREV.lock().unwrap();
     let usage = match prev.as_ref() {
@@ -1235,7 +1235,7 @@ pub fn charge_plan(hour: u32, minute: u32, now: i64) -> ActionResult {
     if limit >= 100 || hour > 23 || minute > 59 {
         return err("There is no charge limit set, so it already charges to full");
     }
-    let offset = crate::batch6::utc_offset();
+    let offset = crate::habits::utc_offset();
     let local = now + offset;
     let mut ready_local = local - local.rem_euclid(86_400) + hour as i64 * 3600 + minute as i64 * 60;
     if ready_local <= local + 600 {
@@ -1282,7 +1282,7 @@ pub fn charge_tick(db: &Db, now: i64) -> Option<(bool, String)> {
         }
     }
     let restore: u32 = load_json::<Option<u32>>("charge-once.json")?;
-    let battery = crate::batch4::battery_now()?;
+    let battery = crate::insight::battery_now()?;
     if battery.percent < 100 && !battery.discharging {
         return None;
     }

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ActionResult, ConfirmButton, Segmented, Sparkline, StatusLine, formatClock, formatDay, useAction, usePoll } from "./ui";
-import { NtfySetting } from "./Batch7";
+import { NtfySetting } from "./Reports";
 
 interface ScreenDay {
   day_start: number;

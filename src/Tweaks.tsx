@@ -2,8 +2,8 @@ import { useContext, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { NavContext } from "./nav";
 import { ConfirmButton, formatClock, formatDay, usePoll } from "./ui";
-import { MeasureEffect } from "./Batch4";
-import { PutEverythingBack } from "./Batch7";
+import { MeasureEffect } from "./Insight";
+import { PutEverythingBack } from "./Reports";
 
 interface TweakState {
   id: string;

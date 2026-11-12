@@ -1,0 +1,28 @@
+name: Something doesn't work
+description: A feature misbehaves, shows wrong numbers, or Trace won't start
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: input
+    id: where
+    attributes:
+      label: Which page and card?
+      placeholder: e.g. Control › Network › Saved Wi-Fi Networks
+  - type: textarea
+    id: machine
+    attributes:
+      label: Your machine
+      description: Open Overview, scroll to "What Works On This Machine", press "Show what's missing" and paste what it says. Add your laptop or PC model if it's hardware related.
+      placeholder: "EndeavourOS · Hyprland (wayland) · 23 of 26 features available …"
+    validations:
+      required: true
+  - type: input
+    id: how
+    attributes:
+      label: How did you install Trace?
+      placeholder: install script / .deb / .rpm / AppImage / AUR / built from source

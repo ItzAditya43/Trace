@@ -38,6 +38,13 @@ export function NeedsHyprland({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+/** Shows its children only on Arch-based systems (pacman). */
+export function ArchOnly({ children }: { children: React.ReactNode }) {
+  const p = usePlatform();
+  if (!p || p.packages !== "pacman") return null;
+  return <>{children}</>;
+}
+
 const DESKTOP_NAME: Record<string, string> = {
   hyprland: "Hyprland",
   kde: "KDE Plasma",

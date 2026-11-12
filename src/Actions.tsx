@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { ActionResult, ConfirmButton, Segmented, StatusLine, bytesToHuman, formatClock, formatDay, useAction, usePoll } from "./ui";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { AutoMaintenance, Equaliser } from "./Batch6";
+import { AutoMaintenance, Equaliser } from "./Habits";
 
 async function pickFolder(): Promise<string | null> {
   const path = await openDialog({ directory: true, multiple: false });

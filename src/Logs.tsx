@@ -7,9 +7,9 @@ import {
   formatDuration,
   usePoll,
 } from "./ui";
-import { AccessLog } from "./Batch4";
-import { ScreenStrip } from "./Batch6";
-import { GameHistory } from "./Batch7";
+import { AccessLog } from "./Insight";
+import { ScreenStrip } from "./Habits";
+import { GameHistory } from "./Reports";
 
 interface Totals {
   hours_recorded: number;

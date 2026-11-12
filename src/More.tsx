@@ -12,7 +12,7 @@ import {
   useAction,
   usePoll,
 } from "./ui";
-import { ChargeOnce } from "./Batch5";
+import { ChargeOnce } from "./Actions";
 
 /** Tests link, router, internet and name lookups in turn and says where it breaks. */
 export function ConnectionDoctor() {

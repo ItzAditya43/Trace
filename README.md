@@ -4,7 +4,15 @@ A machine observatory and control centre for Linux. Trace shows what your comput
 
 Built with Tauri (Rust) and React. Everything it tells you comes from measurements and fixed rules. Nothing is sent anywhere unless you switch that on.
 
-![Trace](logo.png)
+
+![Overview](docs/screenshots/overview.png)
+
+| | |
+|---|---|
+| ![Memory](docs/screenshots/memory.png) | ![Tweaks](docs/screenshots/tweaks.png) |
+| Where every byte of memory goes, with leak detection | About 260 settings with plain explanations and undo |
+
+![Search](docs/screenshots/search.png)
 
 ## What it does
 
@@ -42,6 +50,8 @@ Run the same command again to update. To remove Trace:
 curl -fsSL https://raw.githubusercontent.com/ItzAditya43/Trace/main/install.sh | sh -s -- --uninstall
 ```
 
+On Arch, it can also come from the AUR once published there: `yay -S trace-monitor-bin` (see `packaging/aur`).
+
 Prefer to do it by hand? Every build is on the [Releases](../../releases) page. See [Getting started](docs/getting-started.md) for building from source, the launcher entry and starting at login.
 
 ## Documentation
@@ -68,3 +78,7 @@ Prefer to do it by hand? Every build is on the [Releases](../../releases) page. 
 ## Versions
 
 The version lives in `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json`; keep the three in step. A push to `main` whose version has no release yet builds and publishes one.
+
+## Licence
+
+Trace is free software under the [GNU General Public License v3](LICENSE): you may use, study, share and change it, and anything you distribute built on it must stay open under the same terms.

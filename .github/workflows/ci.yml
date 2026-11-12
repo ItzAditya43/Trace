@@ -1,0 +1,71 @@
+name: CI
+
+# Runs on every pull request, and is called by the release workflow before
+# anything is published.
+on:
+  pull_request:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgtk-3-dev
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Type-check the interface
+        run: |
+          npm ci
+          npx tsc --noEmit
+
+      - name: Check the install script
+        run: sh -n install.sh
+
+      - name: Rust tests
+        working-directory: src-tauri
+        run: cargo test
+
+  # The one-line installer, against the published release, on each family of distributions.
+  install:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: ubuntu:24.04
+            prep: apt-get update && apt-get install -y curl ca-certificates
+          - image: debian:12
+            prep: apt-get update && apt-get install -y curl ca-certificates
+          - image: fedora:41
+            prep: "true"
+          - image: archlinux:latest
+            prep: pacman -Sy --noconfirm
+          - image: opensuse/tumbleweed
+            prep: "true"
+    container: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install with the script, check it starts, uninstall
+        run: |
+          sh -c "${{ matrix.prep }}"
+          sh install.sh
+          BIN=$(command -v trace || echo /usr/local/bin/trace)
+          out=$(timeout 10 "$BIN" 2>&1 || true)
+          echo "$out" | head -3
+          if echo "$out" | grep -q "error while loading shared libraries"; then echo "missing libraries"; exit 1; fi
+          sh install.sh --uninstall

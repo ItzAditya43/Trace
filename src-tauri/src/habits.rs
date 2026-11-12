@@ -136,7 +136,7 @@ static MEDIA_ACTIVE: Mutex<Option<HashSet<(String, String)>>> = Mutex::new(None)
 
 /// Notes each time an app starts using the microphone or camera. Called once a minute.
 pub fn media_tick(db: &Db, now: i64) {
-    let current = crate::batch3::media_use();
+    let current = crate::care::media_use();
     let now_set: HashSet<(String, String)> = current
         .microphone
         .into_iter()
@@ -299,7 +299,7 @@ pub fn phone_tick(away: bool) {
     if !away || !extras().phone_alerts {
         return;
     }
-    let events = crate::batch4::access_log();
+    let events = crate::insight::access_log();
     let mut seen = PHONE_SEEN.lock().unwrap();
     let newest = events.first().map(|e| e.when.clone()).unwrap_or_default();
     if seen.is_empty() {
@@ -868,7 +868,7 @@ mod live {
 #[cfg(test)]
 mod live_actions {
     use super::*;
-    use crate::{batch3, batch4, batch5};
+    use crate::{actions, care, insight};
 
     fn home_scratch(name: &str) -> std::path::PathBuf {
         let dir = dirs::home_dir().unwrap().join(format!(".trace-live-test-{name}"));
@@ -884,10 +884,10 @@ mod live_actions {
         let data = vec![3u8; 1_200_000];
         fs::write(dir.join("one.bin"), &data).unwrap();
         fs::write(dir.join("two.bin"), &data).unwrap();
-        let scan = batch5::scan_files(&dir.to_string_lossy(), 0).unwrap();
+        let scan = actions::scan_files(&dir.to_string_lossy(), 0).unwrap();
         assert_eq!(scan.duplicates.len(), 1);
         let victim = dir.join("two.bin").to_string_lossy().to_string();
-        let r = batch5::trash_files(&[victim.clone()]);
+        let r = actions::trash_files(&[victim.clone()]);
         assert!(r.ok, "{}", r.message);
         assert!(!Path::new(&victim).exists() && dir.join("one.bin").exists());
         // Take our test file back out of the trash.
@@ -902,16 +902,16 @@ mod live_actions {
     fn work_mode_starts_logs_and_stops_a_command() {
         let dir = home_scratch("project");
         let path = dir.to_string_lossy().to_string();
-        let r = batch5::work_start(&path, "echo hello-from-work-mode; sleep 60");
+        let r = actions::work_start(&path, "echo hello-from-work-mode; sleep 60");
         assert!(r.ok, "{}", r.message);
         std::thread::sleep(std::time::Duration::from_secs(2));
-        let status = batch5::work_status(&path).unwrap();
+        let status = actions::work_status(&path).unwrap();
         assert!(status.command_running);
-        assert!(batch5::work_log(&path).contains("hello-from-work-mode"));
-        assert!(batch5::work_stop(&path).ok);
+        assert!(actions::work_log(&path).contains("hello-from-work-mode"));
+        assert!(actions::work_stop(&path).ok);
         std::thread::sleep(std::time::Duration::from_secs(1));
-        assert!(!batch5::work_status(&path).unwrap().command_running);
-        batch5::work_start(&path, ""); // forget the saved command
+        assert!(!actions::work_status(&path).unwrap().command_running);
+        actions::work_start(&path, ""); // forget the saved command
         fs::remove_dir_all(dir).ok();
     }
 
@@ -924,27 +924,27 @@ mod live_actions {
         fs::create_dir_all(&dest).unwrap();
         fs::write(src.join("a.txt"), "hello").unwrap();
         let saved = fs::read_to_string(data_dir().join("backup.json")).ok();
-        let r = batch5::backup_save(batch5::BackupConfig { sources: vec![src.to_string_lossy().to_string()], destination: dest.to_string_lossy().to_string(), weekly: false, last_ok: 0 });
+        let r = actions::backup_save(actions::BackupConfig { sources: vec![src.to_string_lossy().to_string()], destination: dest.to_string_lossy().to_string(), weekly: false, last_ok: 0 });
         assert!(r.ok, "{}", r.message);
-        assert!(batch5::backup_view().same_drive, "same-drive warning shows");
-        assert!(batch5::backup_start(1).ok);
+        assert!(actions::backup_view().same_drive, "same-drive warning shows");
+        assert!(actions::backup_start(1).ok);
         let wait = || {
             for _ in 0..100 {
                 std::thread::sleep(std::time::Duration::from_millis(200));
-                if !batch5::backup_view().progress.running {
+                if !actions::backup_view().progress.running {
                     break;
                 }
             }
         };
         wait();
-        let view = batch5::backup_view();
+        let view = actions::backup_view();
         assert_eq!(view.snapshots.len(), 1, "{}", view.progress.message);
         let name = view.snapshots[0].clone();
-        assert!(batch5::backup_verify(&name).ok);
+        assert!(actions::backup_verify(&name).ok);
         wait();
-        assert!(batch5::backup_view().progress.message.contains("matches your files exactly"), "{}", batch5::backup_view().progress.message);
-        assert!(batch5::backup_delete(&name).ok);
-        assert!(batch5::backup_view().snapshots.is_empty());
+        assert!(actions::backup_view().progress.message.contains("matches your files exactly"), "{}", actions::backup_view().progress.message);
+        assert!(actions::backup_delete(&name).ok);
+        assert!(actions::backup_view().snapshots.is_empty());
         match saved {
             Some(text) => fs::write(data_dir().join("backup.json"), text).unwrap(),
             None => {
@@ -961,14 +961,14 @@ mod live_actions {
         let state = |pid: u32| fs::read_to_string(format!("/proc/{pid}/stat")).unwrap().rsplit_once(')').unwrap().1.trim().chars().next().unwrap();
         let saved = fs::read_to_string(data_dir().join("focus.json")).ok();
         assert!(saved.is_none(), "a real focus session is running; not touching it");
-        let r = batch3::focus_start(vec!["sleep".into()], 1, 1000);
+        let r = care::focus_start(vec!["sleep".into()], 1, 1000);
         assert!(r.ok, "{}", r.message);
         assert_eq!(state(child.id()), 'T', "frozen");
-        batch3::focus_tick(1000 + 30);
+        care::focus_tick(1000 + 30);
         assert_eq!(state(child.id()), 'T', "still inside the minute");
-        batch3::focus_tick(1000 + 61);
+        care::focus_tick(1000 + 61);
         assert_ne!(state(child.id()), 'T', "woken when the time is up");
-        assert!(batch3::focus_current().is_none());
+        assert!(care::focus_current().is_none());
         child.kill().ok();
         child.wait().ok();
     }
@@ -976,32 +976,32 @@ mod live_actions {
     #[test]
     #[ignore]
     fn wifi_switches_flip_and_flip_back_and_the_qr_is_made() {
-        let Some(net) = batch3::saved_wifi().into_iter().last() else { return };
-        assert!(batch3::wifi_action(&net.uuid, if net.metered { "metered_off" } else { "metered_on" }).ok);
-        assert_eq!(batch3::saved_wifi().into_iter().find(|n| n.uuid == net.uuid).unwrap().metered, !net.metered);
-        assert!(batch3::wifi_action(&net.uuid, if net.metered { "metered_on" } else { "metered_off" }).ok);
-        assert!(batch3::wifi_action(&net.uuid, if net.autoconnect { "auto_off" } else { "auto_on" }).ok);
-        assert_eq!(batch3::saved_wifi().into_iter().find(|n| n.uuid == net.uuid).unwrap().autoconnect, !net.autoconnect);
-        assert!(batch3::wifi_action(&net.uuid, if net.autoconnect { "auto_on" } else { "auto_off" }).ok);
-        let after = batch3::saved_wifi().into_iter().find(|n| n.uuid == net.uuid).unwrap();
+        let Some(net) = care::saved_wifi().into_iter().last() else { return };
+        assert!(care::wifi_action(&net.uuid, if net.metered { "metered_off" } else { "metered_on" }).ok);
+        assert_eq!(care::saved_wifi().into_iter().find(|n| n.uuid == net.uuid).unwrap().metered, !net.metered);
+        assert!(care::wifi_action(&net.uuid, if net.metered { "metered_on" } else { "metered_off" }).ok);
+        assert!(care::wifi_action(&net.uuid, if net.autoconnect { "auto_off" } else { "auto_on" }).ok);
+        assert_eq!(care::saved_wifi().into_iter().find(|n| n.uuid == net.uuid).unwrap().autoconnect, !net.autoconnect);
+        assert!(care::wifi_action(&net.uuid, if net.autoconnect { "auto_on" } else { "auto_off" }).ok);
+        let after = care::saved_wifi().into_iter().find(|n| n.uuid == net.uuid).unwrap();
         assert_eq!((after.metered, after.autoconnect), (net.metered, net.autoconnect), "left as it was");
-        let svg = batch4::wifi_qr(&net.uuid).unwrap();
+        let svg = insight::wifi_qr(&net.uuid).unwrap();
         assert!(svg.contains("<svg") && svg.len() > 1000);
     }
 
     #[test]
     #[ignore]
     fn measurement_sound_output_and_stream_volume_work() {
-        let before = batch4::measurements();
-        let after = batch4::measure("live test", 15, 1);
+        let before = insight::measurements();
+        let after = insight::measure("live test", 15, 1);
         assert_eq!(after.len(), (before.len() + 1).min(12));
         assert!(after[0].temp_c > 20.0 && after[0].cpu_percent >= 0.0);
         fs::write(data_dir().join("measurements.json"), serde_json::to_string(&before).unwrap()).unwrap();
 
         let sink = run_lossy(Command::new("pactl").arg("get-default-sink"));
         assert!(crate::desktop::set_default_audio("sink", &sink).ok, "setting the output it already has");
-        if let Some(stream) = batch5::mixer().streams.first() {
-            assert!(batch5::stream_set(stream.id, "volume", &stream.volume.to_string()).ok);
+        if let Some(stream) = actions::mixer().streams.first() {
+            assert!(actions::stream_set(stream.id, "volume", &stream.volume.to_string()).ok);
         }
     }
 
@@ -1009,10 +1009,10 @@ mod live_actions {
     #[ignore]
     fn settings_file_saves_and_loads_back() {
         let db = Db { conn: Mutex::new(rusqlite::Connection::open(data_dir().join("history.sqlite3")).unwrap()) };
-        let path = batch3::export_settings(&db).unwrap();
+        let path = care::export_settings(&db).unwrap();
         let text = fs::read_to_string(&path).unwrap();
         assert!(text.contains("\"trace_settings\": 1"));
-        let message = batch3::import_settings(&db, &path).unwrap();
+        let message = care::import_settings(&db, &path).unwrap();
         assert!(message.starts_with("Loaded"), "{message}");
         fs::remove_file(path).ok();
     }
@@ -1025,7 +1025,7 @@ mod live_actions {
         fs::remove_file(&out).ok();
         // /tmp inside is private, so the program reports through a file descriptor we can't give it;
         // instead it simply tries to write to home, which must fail.
-        let r = batch3::run_restricted(&format!("touch '{}'", marker.display()), true, true, Some(128), None);
+        let r = care::run_restricted(&format!("touch '{}'", marker.display()), true, true, Some(128), None);
         assert!(r.ok, "{}", r.message);
         std::thread::sleep(std::time::Duration::from_secs(2));
         assert!(!marker.exists(), "home was writable");

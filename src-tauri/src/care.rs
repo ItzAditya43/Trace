@@ -37,7 +37,7 @@ fn unit_active(unit: &str) -> bool {
 pub fn security_report() -> SecurityReport {
     let mut findings = Vec::new();
     let mut add = |level: &str, title: &str, detail: String| {
-        let (fix, fix_label) = crate::batch6::fix_for(title).unwrap_or(("", ""));
+        let (fix, fix_label) = crate::habits::fix_for(title).unwrap_or(("", ""));
         findings.push(Finding { level: level.into(), title: title.into(), detail, fix: fix.into(), fix_label: fix_label.into() });
     };
 
@@ -116,7 +116,7 @@ pub fn security_report() -> SecurityReport {
         }
     }
 
-    let failed: Vec<String> = crate::batch4::failed_logins().into_iter().rev().take(20).map(|(when, what)| format!("{when} — {}", what.to_lowercase())).collect();
+    let failed: Vec<String> = crate::insight::failed_logins().into_iter().rev().take(20).map(|(when, what)| format!("{when} — {}", what.to_lowercase())).collect();
     if failed.len() >= 10 {
         add("warn", "Many failed logins this week", "Listed below. A handful of your own mistyped passwords is normal; a long run from sshd is someone guessing.".into());
     }

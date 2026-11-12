@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { homeDir } from "@tauri-apps/api/path";
 import { ActionResult, Tile, bytesToHuman } from "./ui";
 import { ProjectJunk } from "./More";
-import { WorkMode } from "./Batch5";
+import { WorkMode } from "./Actions";
 
 interface ProjectInfo {
   name: string;

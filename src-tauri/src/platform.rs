@@ -137,7 +137,7 @@ fn detect() -> Platform {
         feature("Backups", has_tool("rsync"), "rsync"),
         feature("Frame rate in games", has_tool("mangohud"), "MangoHud"),
         feature("Run programs without file access", has_tool("bwrap"), "bubblewrap"),
-        feature("Keyboard light timeout", crate::batch6::has_kbd_light(), "a keyboard backlight and brightnessctl"),
+        feature("Keyboard light timeout", crate::habits::has_kbd_light(), "a keyboard backlight and brightnessctl"),
         feature("Phone alerts", has_tool("kdeconnect-cli"), "KDE Connect"),
         feature("Wi-Fi QR codes", has_tool("qrencode"), "qrencode"),
         feature("Password prompts for system changes", has_tool("pkexec"), "polkit (pkexec)"),

@@ -70,7 +70,7 @@ export default function Packages() {
         <p className="diagnose-hint">
           Trace lists updates but doesn't install them: a full system upgrade
           can ask questions and should be run in a terminal (
-          {data.manager === "pacman" ? "sudo pacman -Syu" : "sudo apt upgrade"}
+          {({ pacman: "sudo pacman -Syu", apt: "sudo apt upgrade", dnf: "sudo dnf upgrade", zypper: "sudo zypper update" } as Record<string, string>)[data.manager] ?? "your package manager's upgrade command"}
           ). A kernel or driver update will then show up under Health →
           Restart needed.
         </p>

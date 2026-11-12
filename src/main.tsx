@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
-import { Mini } from "./Batch5";
+import { Mini } from "./Actions";
 import { Overlay } from "./Overlay";
 import "./App.css";
 

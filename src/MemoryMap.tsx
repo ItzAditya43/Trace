@@ -7,7 +7,7 @@ import {
   useAction,
   usePoll,
 } from "./ui";
-import { Leaks } from "./Batch3";
+import { Leaks } from "./Care";
 
 interface MemoryCategory {
   key: string;

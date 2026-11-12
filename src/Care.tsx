@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { ConfirmButton, StatusLine, bytesToHuman, formatClock, formatDay, useAction, usePoll } from "./ui";
-import { WifiQr } from "./Batch4";
-import { GpuLoad, MediaHistory, VulnerablePackages } from "./Batch6";
+import { WifiQr } from "./Insight";
+import { GpuLoad, MediaHistory, VulnerablePackages } from "./Habits";
 
 const LEVEL_MARK: Record<string, [string, string]> = {
   good: ["✓", "status-ok"],
