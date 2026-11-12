@@ -128,9 +128,33 @@ if [ "$WANT_VERSION" = latest ]; then
 else
     API="https://api.github.com/repos/$REPO/releases/tags/v${WANT_VERSION#v}"
 fi
-RELEASE=$(fetch "$API") || fail "Couldn't reach GitHub to find the release ($API)."
+RELEASE=$(fetch "$API" 2>/dev/null) || RELEASE=""
 asset() { printf '%s' "$RELEASE" | grep -o "\"browser_download_url\": *\"[^\"]*$1\"" | head -n 1 | sed 's/.*"\(https[^"]*\)"/\1/'; }
 TAG=$(printf '%s' "$RELEASE" | grep -o '"tag_name": *"[^"]*"' | head -n 1 | sed 's/.*"\([^"]*\)"$/\1/')
+if [ -z "$TAG" ]; then
+    # GitHub limits how often one address may ask its API (shared networks
+    # hit this). The ordinary release pages have no such limit: find the
+    # version there and build the download links from the usual file names.
+    if [ "$WANT_VERSION" = latest ]; then
+        if have curl; then
+            TAG=$(curl -fsI "https://github.com/$REPO/releases/latest" | tr -d '\r' | sed -n 's|^[Ll]ocation: .*/tag/||p' | head -n 1)
+        else
+            TAG=$(wget -S --spider --max-redirect=0 "https://github.com/$REPO/releases/latest" 2>&1 | sed -n 's|^ *[Ll]ocation: .*/tag/||p' | head -n 1)
+        fi
+    else
+        TAG="v${WANT_VERSION#v}"
+    fi
+    [ -n "$TAG" ] || fail "Couldn't reach GitHub to find the release."
+    V="${TAG#v}"
+    BASE="https://github.com/$REPO/releases/download/$TAG"
+    asset() {
+        case "$1" in
+            *deb*) echo "$BASE/trace_${V}_amd64.deb" ;;
+            *rpm*) echo "$BASE/trace-${V}-1.x86_64.rpm" ;;
+            *) echo "$BASE/trace_${V}_amd64.AppImage" ;;
+        esac
+    }
+fi
 [ -n "$TAG" ] || fail "That release wasn't found."
 
 # ---- which route ----
