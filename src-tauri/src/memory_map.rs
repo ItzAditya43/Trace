@@ -642,6 +642,10 @@ mod tests {
     /// the kernel sees the limit, and removes it again. No root involved.
     #[test]
     fn app_limits_reach_the_kernel_through_systemd() {
+        // Needs a desktop session's own systemd manager; build machines have none.
+        if !std::process::Command::new("systemctl").args(["--user", "is-system-running"]).output().is_ok_and(|o| !o.stdout.is_empty() && !String::from_utf8_lossy(&o.stdout).contains("offline")) {
+            return;
+        }
         let name = format!("trace-test-limited-{}", std::process::id());
         let exe = std::env::temp_dir().join(&name);
         assert!(std::process::Command::new("cp").arg("/usr/bin/sleep").arg(&exe).status().unwrap().success());
