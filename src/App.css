@@ -2856,3 +2856,15 @@ html.overlay-root #root {
     box-shadow: 0 0 0 0 rgba(79, 127, 224, 0);
   }
 }
+
+/* The whole left column stays where it is while a page scrolls. */
+.shell .header {
+  position: sticky;
+  top: 20px;
+  align-self: start;
+}
+
+.side-nav {
+  top: 120px;
+  align-self: start;
+}
