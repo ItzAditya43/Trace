@@ -1,7 +1,7 @@
 # Maintainer: ItzAditya43
 pkgname=trace-monitor-bin
 _pkgname=trace
-pkgver=1.0.1
+pkgver=1.0.2
 pkgrel=1
 pkgdesc="Machine observatory and control centre for Linux: live monitoring, history, tweaks, overlay and more"
 arch=('x86_64')
