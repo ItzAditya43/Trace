@@ -2551,8 +2551,40 @@ fn window_closed(app: &tauri::AppHandle, label: &str) {
                 unsafe { libc::kill(pid as i32, libc::SIGTERM) };
             }
             WEB_ORPHANS.lock().unwrap().clear();
+            // Once a window has been open, the graphics libraries it loaded stay
+            // in memory for good. Starting afresh in the tray gives that back.
+            std::thread::sleep(std::time::Duration::from_secs(25));
+            restart_into_tray_if_idle(&app);
         }
     });
+}
+
+/// Replaces this process with a fresh copy of itself started in the tray, but
+/// only when nothing in memory would be lost: no window, no countdown or
+/// watched process, no app frozen by Trace, no temperature rule in effect.
+fn restart_into_tray_if_idle(app: &tauri::AppHandle) {
+    if !app.webview_windows().is_empty() || !keeps_running_without_a_window(app) {
+        return;
+    }
+    let state = app.state::<AppState>();
+    {
+        let pending = state.pending.lock().unwrap();
+        if !pending.watches.is_empty() || pending.countdown.is_some() {
+            return;
+        }
+    }
+    // Keep-awake is held by a process Trace owns; restarting would let it go.
+    if !state.sleepers.lock().unwrap().frozen.is_empty() || state.thermal.lock().unwrap().engaged() || tweaks::keep_awake_active() {
+        return;
+    }
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    // A binary replaced by an update shows as "(deleted)"; then the new one is started.
+    let exe = std::path::PathBuf::from(exe.to_string_lossy().trim_end_matches(" (deleted)").to_string());
+    use std::os::unix::process::CommandExt;
+    let err = std::process::Command::new(exe).arg("--hidden").exec();
+    eprintln!("couldn't restart into the tray: {err}");
 }
 
 /// A page the window should open on, set before the window exists.

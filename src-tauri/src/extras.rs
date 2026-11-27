@@ -460,6 +460,11 @@ pub struct ThermalState {
 }
 
 impl ThermalState {
+    /// A temperature rule has changed a setting and not yet put it back.
+    pub fn engaged(&self) -> bool {
+        !self.active.is_empty()
+    }
+
     /// What each rule should do this tick: Some(true) = engage, Some(false) = release.
     fn decide(&mut self, rule: &ThermalRule, hottest: f32) -> Option<bool> {
         let engaged = self.active.contains_key(&rule.id);

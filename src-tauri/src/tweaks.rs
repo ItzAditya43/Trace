@@ -463,7 +463,7 @@ fn primary_connection() -> Option<(String, String)> {
 
 static KEEP_AWAKE: Mutex<Option<std::process::Child>> = Mutex::new(None);
 
-fn keep_awake_active() -> bool {
+pub fn keep_awake_active() -> bool {
     let mut guard = KEEP_AWAKE.lock().unwrap();
     match guard.as_mut().map(|child| child.try_wait()) {
         Some(Ok(None)) => true,
