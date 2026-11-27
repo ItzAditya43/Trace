@@ -18,6 +18,11 @@ fn db_path() -> PathBuf {
 impl Db {
     pub fn open() -> Self {
         let conn = Connection::open(db_path()).expect("failed to open trace history db");
+        // Write-ahead logging: each write is a small append instead of a
+        // journal file created, synced and deleted, which on a machine that
+        // records every few seconds is the difference between megabytes and
+        // gigabytes a day written to the drive.
+        conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA wal_autocheckpoint = 1000;").ok();
         conn.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS resource_snapshots (

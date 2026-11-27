@@ -229,17 +229,52 @@ fn read_amd_gpus() -> Vec<GpuInfo> {
     gpus
 }
 
+/// Whether Trace's main window is on screen (it only exists while it is).
+static WINDOW_SHOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// True when every NVIDIA graphics card is in its power-saving sleep.
+fn nvidia_asleep() -> bool {
+    let cards: Vec<String> = fs::read_dir("/sys/bus/pci/devices")
+        .map(|d| {
+            d.flatten()
+                .map(|e| e.path())
+                .filter(|p| fs::read_to_string(p.join("vendor")).is_ok_and(|v| v.trim() == "0x10de") && fs::read_to_string(p.join("class")).is_ok_and(|c| c.starts_with("0x03")))
+                .filter_map(|p| fs::read_to_string(p.join("power/runtime_status")).ok())
+                .collect()
+        })
+        .unwrap_or_default();
+    !cards.is_empty() && cards.iter().all(|s| s.trim() == "suspended")
+}
+
 fn read_nvidia_gpus() -> Vec<GpuInfo> {
+    // Last answer and when it was asked, reused while it is fresh enough.
+    static LAST: Mutex<Option<(Instant, Vec<GpuInfo>)>> = Mutex::new(None);
     // When the driver isn't usable (not installed, or mismatched until a
     // reboot) the tool fails every time; don't spawn it on every snapshot.
     static FAILED_AT: Mutex<Option<Instant>> = Mutex::new(None);
     if FAILED_AT.lock().unwrap().is_some_and(|at| at.elapsed().as_secs() < 120) {
         return Vec::new();
     }
+    let mut last = LAST.lock().unwrap();
+    // Asking a sleeping card wakes it, which costs battery for nothing.
+    if nvidia_asleep() {
+        return last
+            .as_ref()
+            .map(|(_, gpus)| gpus.iter().map(|g| GpuInfo { usage_percent: 0.0, vram_used_bytes: 0, temperature_c: None, power_draw_watts: Some(0.0), ..g.clone() }).collect())
+            .unwrap_or_default();
+    }
+    // Nobody is looking: once a minute is plenty for the logbook.
+    let max_age = if WINDOW_SHOWN.load(std::sync::atomic::Ordering::Relaxed) { 0 } else { 60 };
+    if let Some((at, gpus)) = last.as_ref() {
+        if at.elapsed().as_secs() < max_age {
+            return gpus.clone();
+        }
+    }
     let gpus = query_nvidia_gpus();
     if gpus.is_empty() {
         *FAILED_AT.lock().unwrap() = Some(Instant::now());
     }
+    *last = Some((Instant::now(), gpus.clone()));
     gpus
 }
 
@@ -385,11 +420,15 @@ fn take_snapshot(state: &AppState) -> Snapshot {
     let mut sys = state.sys.lock().unwrap();
     sys.refresh_cpu_all();
     sys.refresh_memory();
-    sys.refresh_processes_specifics(
-        sysinfo::ProcessesToUpdate::All,
-        true,
-        sysinfo::ProcessRefreshKind::new().with_cpu().with_memory(),
-    );
+    // The per-process list is only shown in the window; the background
+    // recording works from whole-machine numbers and its own app breakdown.
+    if WINDOW_SHOWN.load(std::sync::atomic::Ordering::Relaxed) || sys.processes().is_empty() {
+        sys.refresh_processes_specifics(
+            sysinfo::ProcessesToUpdate::All,
+            true,
+            sysinfo::ProcessRefreshKind::new().with_cpu().with_memory(),
+        );
+    }
 
     let disks = Disks::new_with_refreshed_list();
     let disk_infos = disks
@@ -2534,6 +2573,7 @@ fn show_main_window(app: &tauri::AppHandle) {
             built
         });
         if let Some(window) = window {
+            WINDOW_SHOWN.store(true, std::sync::atomic::Ordering::Relaxed);
             window.emit("trace-visible", true).ok();
             window.show().ok();
             window.unminimize().ok();
@@ -3268,7 +3308,17 @@ fn background_tick(state: &AppState, snap: &Snapshot, tick: u64) {
         log_action(state, "full_charge_once", ok, &message);
     }
 
+    // Reading every app's memory is the most expensive thing Trace does in the
+    // background. Every minute while someone is looking or a rule depends on
+    // it; every three minutes otherwise.
+    let shown = WINDOW_SHOWN.load(std::sync::atomic::Ordering::Relaxed);
+    let breakdown_every: u64 = if shown || !config.rules.is_empty() || !actions::group_budgets().is_empty() { 6 } else { 18 };
     if tick % 6 == 0 {
+        if let Some((ok, message)) = actions::game_tick(&state.db) {
+            log_action(state, "game_mode", ok, &message);
+        }
+    }
+    if tick % breakdown_every == 0 {
         let apps = memory_map::breakdown().apps;
         let top: Vec<(String, u64, u64)> = apps
             .iter()
@@ -3282,13 +3332,10 @@ fn background_tick(state: &AppState, snap: &Snapshot, tick: u64) {
             .filter(|a| a.ram_bytes + a.swap_bytes > 20 * 1024 * 1024)
             .map(|a| (a.name.clone(), a.ram_bytes))
             .collect();
-        logbook::record_running(&state.db, now, 6 * TICK_SECS as i64, &running);
+        logbook::record_running(&state.db, now, breakdown_every as i64 * TICK_SECS as i64, &running);
         let in_use: Vec<(String, u64)> = apps.iter().map(|a| (a.name.clone(), a.ram_bytes + a.swap_bytes)).collect();
         for (ok, message) in actions::group_tick(&in_use, now) {
             log_action(state, "group_budget", ok, &message);
-        }
-        if let Some((ok, message)) = actions::game_tick(&state.db) {
-            log_action(state, "game_mode", ok, &message);
         }
         insight::record_connections(&state.db, now);
         let outcomes = automation::evaluate_rules(&config, &apps, &mut state.automation.lock().unwrap(), now);
@@ -3341,6 +3388,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
+                if window.label() == "main" {
+                    WINDOW_SHOWN.store(false, std::sync::atomic::Ordering::Relaxed);
+                }
                 window_closed(window.app_handle(), window.label());
             }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -3950,3 +4000,4 @@ mod tests {
         }
     }
 }
+
