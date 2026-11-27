@@ -3286,6 +3286,12 @@ fn background_tick(state: &AppState, snap: &Snapshot, tick: u64) {
     }
     logbook::record_battery(&state.db, now, TICK_SECS as i64, &mut state.battery_prev.lock().unwrap());
     logbook::record_network(&state.db, now, &mut state.net_totals.lock().unwrap());
+    // Hand memory freed since the last tick back to the system.
+    if tick % 6 == 3 {
+        unsafe {
+            libc::malloc_trim(0);
+        }
+    }
     logbook::flush_notifications(&state.db);
 
     // Screen time only counts while someone is actually there.
@@ -3375,6 +3381,17 @@ fn background_tick(state: &AppState, snap: &Snapshot, tick: u64) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Few allocator pools, so memory freed by one thread can be reused by
+    // another instead of each keeping its own.
+    unsafe {
+        libc::mallopt(libc::M_ARENA_MAX, 2);
+    }
+    // A monitor has little to do at once: two worker threads, not one per core.
+    if let Ok(runtime) = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build() {
+        tauri::async_runtime::set(runtime.handle().clone());
+        // Kept alive for as long as the app runs.
+        std::mem::forget(runtime);
+    }
     let start_hidden = std::env::args().any(|a| a == "--hidden");
     tauri::Builder::default()
         // Must be registered first: a second launch hands over to the
@@ -3442,9 +3459,6 @@ pub fn run() {
             window_opened("main", Vec::new());
             if handle_cli(app.handle(), &args) && !start_hidden {
                 show_main_window(app.handle());
-            } else if start_hidden {
-                // Nothing to show yet, so don't keep a window (and its web engine) around.
-                hide_main_window(app.handle());
             }
             if overlay::config().open_at_start {
                 set_overlay(app.handle(), Some(true));

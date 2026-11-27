@@ -12,10 +12,11 @@
   "app": {
     "windows": [
       {
-        "title": "Trace — Machine Observatory",
+        "title": "Trace \u2014 Machine Observatory",
         "width": 1100,
         "height": 720,
-        "visible": false
+        "visible": false,
+        "create": false
       }
     ],
     "security": {
